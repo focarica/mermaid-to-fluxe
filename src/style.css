@@ -114,6 +114,56 @@ textarea {
   gap: var(--space-3);
 }
 
+.diagram-actions,
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.diagram-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.zoom-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-edge);
+  border-radius: var(--radius-control);
+  background: var(--color-raised);
+  color: var(--color-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.zoom-fit {
+  min-width: 56px;
+}
+
+.zoom-level {
+  min-width: 48px;
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.zoom-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-hover);
+}
+
+.zoom-button:focus-visible {
+  outline: var(--space-1) solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+
+.zoom-button:disabled {
+  color: var(--color-ink-quiet);
+  cursor: not-allowed;
+}
+
 .eyebrow {
   margin: 0 0 var(--space-1);
   color: var(--color-ink-quiet);
@@ -249,16 +299,31 @@ code {
   padding: var(--space-6);
 }
 
+.diagram-output.is-zoomed {
+  place-items: start;
+}
+
 .diagram-output svg {
   display: block;
   width: 100%;
-  min-width: 720px;
-  max-width: 100%;
+  max-width: none;
   height: auto;
 }
 
 .status {
   min-height: 1.4em;
+}
+
+@media (max-width: 640px) {
+  .diagram-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .diagram-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 @media (min-width: 768px) {

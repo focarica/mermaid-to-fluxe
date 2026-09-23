@@ -37,7 +37,15 @@ app.innerHTML = `
       <section class="diagram-panel" aria-labelledby="diagram-title">
         <div class="diagram-heading">
           <div><p class="eyebrow">PREVIEW</p><h2 id="diagram-title">Chen notation</h2></div>
-          <button class="export-button" id="export" type="button" disabled>Download PNG</button>
+          <div class="diagram-actions">
+            <div class="zoom-controls" role="group" aria-label="Diagram zoom controls">
+              <button class="zoom-button" id="zoom-out" type="button" aria-label="Zoom out" disabled>−</button>
+              <output class="zoom-level" id="zoom-level" aria-live="polite">100%</output>
+              <button class="zoom-button" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+              <button class="zoom-button zoom-fit" id="zoom-fit" type="button">Fit</button>
+            </div>
+            <button class="export-button" id="export" type="button" disabled>Download PNG</button>
+          </div>
         </div>
         <figure class="diagram-surface" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
@@ -53,6 +61,10 @@ const output = document.querySelector<HTMLDivElement>("#diagram-output");
 const error = document.querySelector<HTMLParagraphElement>("#source-error");
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const exportButton = document.querySelector<HTMLButtonElement>("#export");
+const zoomOutButton = document.querySelector<HTMLButtonElement>("#zoom-out");
+const zoomInButton = document.querySelector<HTMLButtonElement>("#zoom-in");
+const zoomFitButton = document.querySelector<HTMLButtonElement>("#zoom-fit");
+const zoomLevel = document.querySelector<HTMLOutputElement>("#zoom-level");
 const diagramSurface = document.querySelector<HTMLElement>(".diagram-surface");
 if (
   !source ||
@@ -60,6 +72,10 @@ if (
   !error ||
   !status ||
   !exportButton ||
+  !zoomOutButton ||
+  !zoomInButton ||
+  !zoomFitButton ||
+  !zoomLevel ||
   !diagramSurface
 ) {
   throw new Error("Workbench controls are missing");
@@ -69,9 +85,29 @@ const outputRegion = output;
 const errorMessage = error;
 const statusMessage = status;
 const pngButton = exportButton;
+const zoomOut = zoomOutButton;
+const zoomIn = zoomInButton;
+const zoomFit = zoomFitButton;
+const zoomReadout = zoomLevel;
 
 sourceControl.value = sample;
 let currentSvg: SVGSVGElement | undefined;
+let zoom = 1;
+const minimumZoom = 0.5;
+const maximumZoom = 2;
+const zoomStep = 0.25;
+
+function updateZoom(): void {
+  const svg = currentSvg;
+  if (svg) svg.style.width = `${zoom * 100}%`;
+  outputRegion.classList.toggle("is-zoomed", zoom > 1);
+  zoomReadout.value = `${Math.round(zoom * 100)}%`;
+  zoomReadout.textContent = zoomReadout.value;
+  const diagramAvailable = svg !== undefined;
+  zoomOut.disabled = !diagramAvailable || zoom <= minimumZoom;
+  zoomIn.disabled = !diagramAvailable || zoom >= maximumZoom;
+  zoomFit.disabled = !diagramAvailable;
+}
 
 function updatePreview(): void {
   try {
@@ -79,6 +115,7 @@ function updatePreview(): void {
     const svg = renderDiagram(diagram);
     outputRegion.replaceChildren(svg);
     currentSvg = svg;
+    updateZoom();
     sourceControl.removeAttribute("aria-invalid");
     errorMessage.textContent = "";
     const entityCount = diagram.entities.length;
@@ -89,6 +126,7 @@ function updatePreview(): void {
     if (!(cause instanceof ErParseError)) throw cause;
     outputRegion.replaceChildren();
     currentSvg = undefined;
+    updateZoom();
     sourceControl.setAttribute("aria-invalid", "true");
     errorMessage.textContent = cause.message;
     statusMessage.textContent = "Fix the source to generate a diagram.";
@@ -103,6 +141,7 @@ function downloadPng(): void {
   const { width, height } = svg.viewBox.baseVal;
   const copy = svg.cloneNode(true);
   if (!(copy instanceof SVGSVGElement)) return;
+  copy.style.removeProperty("width");
   copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   copy.setAttribute("width", String(width));
   copy.setAttribute("height", String(height));
@@ -148,6 +187,19 @@ function downloadPng(): void {
 
 sourceControl.addEventListener("input", updatePreview);
 pngButton.addEventListener("click", downloadPng);
+zoomOut.addEventListener("click", () => {
+  zoom = Math.max(minimumZoom, zoom - zoomStep);
+  updateZoom();
+});
+zoomIn.addEventListener("click", () => {
+  zoom = Math.min(maximumZoom, zoom + zoomStep);
+  updateZoom();
+});
+zoomFit.addEventListener("click", () => {
+  zoom = 1;
+  diagramSurface.scrollTo({ left: 0, top: 0 });
+  updateZoom();
+});
 diagramSurface.addEventListener("keydown", (event: KeyboardEvent) => {
   const scrollStep = 120;
   switch (event.key) {

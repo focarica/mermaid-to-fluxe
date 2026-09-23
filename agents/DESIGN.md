@@ -51,7 +51,7 @@ The drawing uses the UI sans stack for legible labels and the mono stack only wh
 
 Use a 4px base rhythm: `--space-1: 4px`, `--space-2: 8px`, `--space-3: 12px`, `--space-4: 16px`, `--space-5: 20px`, `--space-6: 24px`, `--space-8: 32px`, `--space-10: 40px`. Use browser intrinsic sizing and `minmax()` where content dictates dimensions.
 
-The editor shell is a three-zone composition: a compact source panel, a dominant canvas, and a narrow action area that can collapse below the source on small viewports. At desktop, source and canvas remain side by side, with the canvas taking the flexible remainder. Diagram overflow scrolls within the canvas only; source content scrolls inside its own panel. The SVG itself is non-editable, and the current MVP has no diagram zoom control. At 375px, panels stack in task order and the canvas retains a useful minimum working height without forcing page-wide horizontal scrolling. Breakpoints: 640px, 768px, 1024px, 1280px.
+The editor shell is a three-zone composition: a compact source panel, a dominant canvas, and a narrow action area that can collapse below the source on small viewports. At desktop, source and canvas remain side by side, with the canvas taking the flexible remainder. Diagram overflow scrolls within the canvas only; source content scrolls inside its own panel. The SVG is non-editable. Canvas zoom ranges from 50% to 200%, with an explicit Fit reset to 100%; diagram overflow remains scrollable. At 375px, panels stack in task order and the canvas retains a useful minimum working height without forcing page-wide horizontal scrolling. Breakpoints: 640px, 768px, 1024px, 1280px.
 
 ## 5. Components
 
@@ -70,17 +70,17 @@ These contracts describe the implemented MVP workbench and Chen renderer. The so
 - **Structure**: labelled, keyboard-focusable figure/work region, drawing surface, and empty and error explanation where appropriate.
 - **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG output is non-editable.
 - **Spacing**: canvas padding `--space-8`; controls cluster `--space-2`; canvas gutters can grow with viewport.
-- **States**: default, empty, and error.
-- **Accessibility**: SVG includes a title and description covering entities, attributes, keys, types, comments, relationships, and cardinality. The figure is keyboard-focusable and supports arrow-key scrolling. Do not encode meaning by color alone.
-- **Motion**: diagram output remains still; no diagram zoom interaction is implemented.
+- **States**: default, empty, error, and zoomed (50%–200%).
+- **Accessibility**: SVG includes a title and description covering entities, attributes, keys, types, comments, relationships, and cardinality. The figure is keyboard-focusable and supports arrow-key scrolling. Zoom in/out and fit are native labeled buttons; current zoom is visible. Do not encode meaning by color alone.
+- **Motion**: diagram output remains still; zoom changes scale without animation.
 - **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document.
 
 ### Action Controls
-- **Structure**: source input updates the diagram preview live; one semantic PNG download button.
-- **Variants**: PNG export is disabled until the source contains valid input.
+- **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls and PNG download button.
+- **Variants**: PNG export and all zoom controls are disabled when no valid diagram is available; zoom is bounded and fit resets to 100%.
 - **Spacing**: cluster gap `--space-2`; minimum hit target 44px.
 - **States**: hover, active, focus-visible, disabled, and status feedback for valid or invalid source; no loading state.
-- **Accessibility**: native button, descriptive name, visible keyboard focus, status feedback announced without stealing focus.
+- **Accessibility**: native buttons with descriptive names, visible keyboard focus, readable zoom percentage, status feedback announced without stealing focus.
 - **Motion**: pressed feedback may use a small transform; state feedback is brief opacity/color. No decorative loops.
 - **Layout**: action cluster in editor chrome, wraps or stacks below the source on narrow screens.
 

@@ -1,0 +1,20 @@
+{
+  "name": "mermaid-to-fluxe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "bun test --pass-with-no-tests",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "roughjs": "^4.6.6"
+  }
+}

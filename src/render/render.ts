@@ -77,7 +77,7 @@ export function renderDiagram(
     y: number,
     size = 16,
     color = ink,
-  ): void => {
+  ): SVGTextElement => {
     const label = document.createElementNS(
       "http://www.w3.org/2000/svg",
       "text",
@@ -92,26 +92,63 @@ export function renderDiagram(
     label.setAttribute("font-weight", "550");
     label.setAttribute("fill", color);
     svg.append(label);
+    return label;
   };
-  layout.relationships.forEach((relationship, index) => {
-    relationship.links.forEach((link, linkIndex) => {
-      svg.append(
-        roughSvg.line(link.from.x, link.from.y, link.to.x, link.to.y, {
-          seed: 100 + index * 4 + linkIndex,
-          stroke: ink,
-          strokeWidth: 1.8,
-        }),
+  const addConnector = (
+    from: Point,
+    to: Point,
+    strokeWidth: number,
+  ): SVGLineElement => {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", String(from.x));
+    line.setAttribute("y1", String(from.y));
+    line.setAttribute("x2", String(to.x));
+    line.setAttribute("y2", String(to.y));
+    line.setAttribute("stroke", ink);
+    line.setAttribute("stroke-width", String(strokeWidth));
+    line.setAttribute("stroke-linecap", "round");
+    return line;
+  };
+  layout.attributes.forEach((attribute) => {
+    const centerX = attribute.x + attribute.width / 2;
+    const centerY = attribute.y + attribute.height / 2;
+    const ellipseScale =
+      1 /
+      Math.hypot(
+        (attribute.anchor.x - centerX) / (attribute.width / 2),
+        (attribute.anchor.y - centerY) / (attribute.height / 2),
       );
-      addLabel(
+    const ellipseBoundary = {
+      x: centerX + (attribute.anchor.x - centerX) * ellipseScale,
+      y: centerY + (attribute.anchor.y - centerY) * ellipseScale,
+    };
+    svg.append(addConnector(attribute.anchor, ellipseBoundary, 1.5));
+  });
+  layout.relationships.forEach((relationship, index) => {
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("data-position-key", `relationship:${index}`);
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("role", "group");
+    group.setAttribute(
+      "aria-label",
+      `${relationship.label} relationship; drag or use arrow keys to move`,
+    );
+    group.style.cursor = "grab";
+    svg.append(group);
+    relationship.links.forEach((link) => {
+      group.append(addConnector(link.from, link.to, 1.8));
+      const cardinality = addLabel(
         cardinalityText[link.cardinality] ?? link.cardinality,
         (link.from.x + link.to.x) / 2,
         (link.from.y + link.to.y) / 2 - 12,
         13,
         muted,
       );
+      cardinality.setAttribute("stroke", paper);
+      cardinality.setAttribute("stroke-width", "4");
+      cardinality.setAttribute("paint-order", "stroke");
+      group.append(cardinality);
     });
-  });
-  layout.relationships.forEach((relationship, index) => {
     const { x, y } = relationship.center;
     const points: [number, number][] = [
       [x, y - relationship.height / 2],
@@ -119,7 +156,7 @@ export function renderDiagram(
       [x, y + relationship.height / 2],
       [x - relationship.width / 2, y],
     ];
-    svg.append(
+    group.append(
       roughSvg.polygon(points, {
         seed: 200 + index,
         stroke: ink,
@@ -129,7 +166,7 @@ export function renderDiagram(
       }),
     );
     if (relationship.identifying) {
-      svg.append(
+      group.append(
         roughSvg.polygon(
           [
             [x, y - relationship.height / 2 + 7],
@@ -147,19 +184,21 @@ export function renderDiagram(
         ),
       );
     }
-    addLabel(relationship.label, x, y);
+    group.append(addLabel(relationship.label, x, y));
   });
   layout.entities.forEach((entity, index) => {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.setAttribute("data-entity", entity.name);
+    group.setAttribute("data-position-key", entity.name);
     group.setAttribute("tabindex", "0");
     group.setAttribute("role", "group");
     group.setAttribute(
       "aria-label",
-      `${entity.name} entity and attributes; drag or use arrow keys to move`,
+      `${entity.name} entity; drag or use arrow keys to move`,
     );
     group.style.cursor = "grab";
-    svg.append(
+    svg.append(group);
+    group.append(
       roughSvg.rectangle(entity.x, entity.y, entity.width, entity.height, {
         seed: 10 + index,
         stroke: ink,
@@ -168,32 +207,32 @@ export function renderDiagram(
         fillStyle: "solid",
       }),
     );
-    const rectangle = svg.lastElementChild;
-    if (rectangle) group.append(rectangle);
-    addLabel(
-      entity.name,
-      entity.x + entity.width / 2,
-      entity.y + entity.height / 2,
-    );
-    const entityLabel = svg.lastElementChild;
-    if (entityLabel) group.append(entityLabel);
-    svg.append(group);
-  });
-  layout.attributes.forEach((attribute, index) => {
-    const group = svg.querySelector<SVGGElement>(
-      `[data-entity="${CSS.escape(attribute.entity)}"]`,
-    );
-    const cluster = group ?? svg;
-    cluster.append(
-      roughSvg.line(
-        attribute.anchor.x,
-        attribute.anchor.y,
-        attribute.x + attribute.width / 2,
-        attribute.y + attribute.height / 2,
-        { seed: 300 + index, stroke: ink, strokeWidth: 1.5 },
+    group.append(
+      addLabel(
+        entity.name,
+        entity.x + entity.width / 2,
+        entity.y + entity.height / 2,
       ),
     );
-    cluster.append(
+  });
+  layout.attributes.forEach((attribute, index) => {
+    const field = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    field.setAttribute(
+      "data-position-key",
+      `attribute:${attribute.entity}:${attribute.name}`,
+    );
+    field.setAttribute("data-attribute", attribute.name);
+    field.setAttribute("tabindex", "0");
+    field.setAttribute("role", "group");
+    field.setAttribute(
+      "aria-label",
+      `${attribute.name} attribute; drag or use arrow keys to move`,
+    );
+    field.style.cursor = "grab";
+    svg.append(field);
+    const centerX = attribute.x + attribute.width / 2;
+    const centerY = attribute.y + attribute.height / 2;
+    field.append(
       roughSvg.ellipse(
         attribute.x + attribute.width / 2,
         attribute.y + attribute.height / 2,
@@ -208,7 +247,6 @@ export function renderDiagram(
         },
       ),
     );
-    const centerX = attribute.x + attribute.width / 2;
     const nameWidth = attribute.name.length * 7.4;
     const keyText = attribute.keys.join("/");
     const fullText = keyText ? `${attribute.name}  ${keyText}` : attribute.name;
@@ -225,28 +263,26 @@ export function renderDiagram(
       underline.setAttribute("y2", String(baselineY + 2));
       underline.setAttribute("stroke", ink);
       underline.setAttribute("stroke-width", "1");
-      (group ?? svg).append(underline);
+      field.append(underline);
     }
-    const previousChild = svg.lastElementChild;
-    addLabel(
-      fullText,
-      attribute.x + attribute.width / 2,
-      attribute.y + attribute.height / 2,
-      13,
-    );
-    if (group && previousChild?.nextElementSibling)
-      group.append(previousChild.nextElementSibling);
-    if (attribute.type) {
-      const previous = svg.lastElementChild;
+    field.append(
       addLabel(
-        attribute.type,
+        fullText,
         attribute.x + attribute.width / 2,
-        attribute.y + attribute.height + 12,
-        10,
-        muted,
+        attribute.type ? centerY - 9 : centerY,
+        13,
+      ),
+    );
+    if (attribute.type) {
+      field.append(
+        addLabel(
+          attribute.type,
+          attribute.x + attribute.width / 2,
+          centerY + 12,
+          10,
+          muted,
+        ),
       );
-      if (group && previous?.nextElementSibling)
-        group.append(previous.nextElementSibling);
     }
   });
   return svg;

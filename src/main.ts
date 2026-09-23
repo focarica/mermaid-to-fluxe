@@ -51,7 +51,7 @@ app.innerHTML = `
         <figure class="diagram-surface" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
         </figure>
-        <p class="hint" id="diagram-scroll-hint">Drag entity groups to reposition; arrow keys nudge focused groups. Positions last for this session only. Wide diagrams may need horizontal scrolling.</p>
+        <p class="hint" id="diagram-scroll-hint">Drag entities, attributes, and relationships to reposition; arrow keys nudge focused items. Positions last for this session only. Wide diagrams may need horizontal scrolling.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
       </section>
     </div>
@@ -102,7 +102,7 @@ const positionOffsets = new Map<string, { x: number; y: number }>();
 let zoom = 1;
 let drag:
   | {
-      name: string;
+      key: string;
       pointerId: number;
       lastClient: { x: number; y: number };
       viewBox: string;
@@ -133,9 +133,17 @@ function updateZoom(): void {
 function updatePreview(): void {
   try {
     const diagram = parseErDiagram(sourceControl.value);
-    const retainedNames = new Set(diagram.entities.map(({ name }) => name));
-    for (const name of positionOffsets.keys())
-      if (!retainedNames.has(name)) positionOffsets.delete(name);
+    const retainedKeys = new Set([
+      ...diagram.entities.map(({ name }) => name),
+      ...diagram.entities.flatMap((entity) =>
+        entity.attributes.map(
+          (attribute) => `attribute:${entity.name}:${attribute.name}`,
+        ),
+      ),
+      ...diagram.relationships.map((_, index) => `relationship:${index}`),
+    ]);
+    for (const key of positionOffsets.keys())
+      if (!retainedKeys.has(key)) positionOffsets.delete(key);
     const svg = renderDiagram(diagram, document, positionOffsets);
     outputRegion.replaceChildren(svg);
     currentSvg = svg;
@@ -179,15 +187,15 @@ outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
   if (event.button !== 0 || !event.isPrimary) return;
   const group =
     event.target instanceof Element
-      ? event.target.closest<SVGGElement>("[data-entity]")
+      ? event.target.closest<SVGGElement>("[data-position-key]")
       : null;
-  const name = group?.getAttribute("data-entity");
-  if (!group || !name || !diagramPoint(event.clientX, event.clientY)) return;
+  const key = group?.getAttribute("data-position-key");
+  if (!group || !key || !diagramPoint(event.clientX, event.clientY)) return;
   const viewBox = currentSvg?.getAttribute("viewBox");
   const svgBounds = currentSvg?.getBoundingClientRect();
   if (!viewBox || !svgBounds) return;
   drag = {
-    name,
+    key,
     pointerId: event.pointerId,
     lastClient: { x: event.clientX, y: event.clientY },
     viewBox,
@@ -205,8 +213,8 @@ outputRegion.addEventListener("pointermove", (event: PointerEvent) => {
   const point = diagramPoint(event.clientX, event.clientY);
   const previousPoint = diagramPoint(drag.lastClient.x, drag.lastClient.y);
   if (!point || !previousPoint || !currentDiagram) return;
-  const offset = positionOffsets.get(drag.name) ?? { x: 0, y: 0 };
-  positionOffsets.set(drag.name, {
+  const offset = positionOffsets.get(drag.key) ?? { x: 0, y: 0 };
+  positionOffsets.set(drag.key, {
     x: offset.x + point.x - previousPoint.x,
     y: offset.y + point.y - previousPoint.y,
   });
@@ -214,7 +222,7 @@ outputRegion.addEventListener("pointermove", (event: PointerEvent) => {
   const svg = renderDiagram(currentDiagram, document, positionOffsets);
   svg.setAttribute("viewBox", drag.viewBox);
   svg
-    .querySelector<SVGGElement>(`[data-entity="${CSS.escape(drag.name)}"]`)
+    .querySelector<SVGGElement>(`[data-position-key="${CSS.escape(drag.key)}"]`)
     ?.style.setProperty("cursor", "grabbing");
   outputRegion.replaceChildren(svg);
   currentSvg = svg;
@@ -263,27 +271,27 @@ outputRegion.addEventListener("keydown", (event: KeyboardEvent) => {
     !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
   )
     return;
-  const group =
+  const item =
     event.target instanceof Element
-      ? event.target.closest<SVGGElement>("[data-entity]")
+      ? event.target.closest<SVGGElement>("[data-position-key]")
       : null;
-  const name = group?.getAttribute("data-entity");
-  if (!name) return;
+  const key = item?.getAttribute("data-position-key");
+  if (!key) return;
   event.preventDefault();
-  const offset = positionOffsets.get(name) ?? { x: 0, y: 0 };
+  const offset = positionOffsets.get(key) ?? { x: 0, y: 0 };
   const step = event.shiftKey ? 20 : 8;
   const dx =
     event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
   const dy =
     event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-  positionOffsets.set(name, { x: offset.x + dx, y: offset.y + dy });
+  positionOffsets.set(key, { x: offset.x + dx, y: offset.y + dy });
   const svg = renderDiagram(currentDiagram, document, positionOffsets);
   outputRegion.replaceChildren(svg);
   currentSvg = svg;
   updateZoom();
   resetLayout.disabled = false;
   outputRegion
-    .querySelector<SVGGElement>(`[data-entity="${CSS.escape(name)}"]`)
+    .querySelector<SVGGElement>(`[data-position-key="${CSS.escape(key)}"]`)
     ?.focus();
 });
 
@@ -364,7 +372,10 @@ zoomFit.addEventListener("click", () => {
   updateZoom();
 });
 diagramSurface.addEventListener("keydown", (event: KeyboardEvent) => {
-  if (event.target instanceof Element && event.target.closest("[data-entity]"))
+  if (
+    event.target instanceof Element &&
+    event.target.closest("[data-position-key]")
+  )
     return;
   const scrollStep = 120;
   switch (event.key) {

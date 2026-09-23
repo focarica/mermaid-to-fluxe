@@ -310,12 +310,12 @@ code {
   height: auto;
 }
 
-.diagram-output [data-entity]:focus-visible {
+.diagram-output [data-position-key]:focus-visible {
   outline: var(--space-1) solid var(--color-accent);
   outline-offset: var(--space-1);
 }
 
-.diagram-output [data-entity] {
+.diagram-output [data-position-key] {
   touch-action: none;
 }
 

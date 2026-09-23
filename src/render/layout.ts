@@ -258,12 +258,30 @@ export function layoutDiagram(
         (attribute.name.length + keyLabel.length) * 9 + 36,
         (attribute.type?.length ?? 0) * 7 + 24,
       );
-      const height = 48;
-      const anchor = {
+      const height = attribute.type ? 64 : 48;
+      const center = {
         x: shape.x + shape.width / 2,
         y: shape.y + shape.height / 2,
       };
       const radius = orbitRadii[entityIndex] ?? 0;
+      const offset = positionOffsets.get(
+        `attribute:${entity.name}:${attribute.name}`,
+      );
+      const x =
+        center.x + Math.cos(angle) * radius - width / 2 + (offset?.x ?? 0);
+      const y =
+        center.y + Math.sin(angle) * radius - height / 2 + (offset?.y ?? 0);
+      const attributeCenter = { x: x + width / 2, y: y + height / 2 };
+      const boundary = (origin: Point, toward: Point, box: Box): Point => {
+        const dx = toward.x - origin.x;
+        const dy = toward.y - origin.y;
+        const scale = Math.max(
+          Math.abs(dx) / (box.width / 2),
+          Math.abs(dy) / (box.height / 2),
+        );
+        return { x: origin.x + dx / scale, y: origin.y + dy / scale };
+      };
+      const entityBoundary = boundary(center, attributeCenter, shape);
       attributes.push({
         entity: entity.name,
         name: attribute.name,
@@ -272,9 +290,9 @@ export function layoutDiagram(
         ...(attribute.comment === undefined
           ? {}
           : { comment: attribute.comment }),
-        anchor,
-        x: anchor.x + Math.cos(angle) * radius - width / 2,
-        y: anchor.y + Math.sin(angle) * radius - height / 2,
+        anchor: entityBoundary,
+        x,
+        y,
         width,
         height,
       });
@@ -294,12 +312,20 @@ export function layoutDiagram(
     const width = Math.max(112, relationship.label.length * 9 + 42);
     const height = 72;
     const isSelfRelationship = relationship.from === relationship.to;
-    const center = isSelfRelationship
+    const defaultCenter = isSelfRelationship
       ? {
           x: from.x,
           y: from.y - fromEntity.height / 2 - height / 2 - clearance,
         }
       : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const relationshipIndex = diagram.relationships.indexOf(relationship);
+    const relationshipOffset = positionOffsets.get(
+      `relationship:${relationshipIndex}`,
+    );
+    const center = {
+      x: defaultCenter.x + (relationshipOffset?.x ?? 0),
+      y: defaultCenter.y + (relationshipOffset?.y ?? 0),
+    };
     const boundaryPoint = (
       origin: Point,
       toward: Point,
@@ -367,11 +393,11 @@ export function layoutDiagram(
   });
   const extents = [
     ...entities,
-    ...attributes.map(({ x, y, width, height, type }) => ({
+    ...attributes.map(({ x, y, width, height }) => ({
       x,
       y,
       width,
-      height: height + (type ? 24 : 0),
+      height,
     })),
     ...relationships.map(({ center, width, height }) => ({
       x: center.x - width / 2,

@@ -8,7 +8,7 @@
 
 ## 1. Atmosphere & Identity
 
-A warm, focused diagram workbench: quiet editor chrome gives the ERD room to breathe, while the diagram itself carries the tactile irregularity of a hand-drawn explanation. Signature: crisp, readable Chen notation with subtly imperfect ink strokes on a pale drafting surface. The implemented MVP workbench edits Mermaid source and previews a static generated artifact. It is not an editor for the diagram itself or a collaborative whiteboard.
+A warm, focused diagram workbench: quiet editor chrome gives the ERD room to breathe, while the diagram itself carries the tactile irregularity of a hand-drawn explanation. Signature: crisp, readable Chen notation with subtly imperfect ink strokes on a pale drafting surface. Mermaid source drives generated Chen notation; limited in-session repositioning moves each entity with owned attributes, without semantic editing or persistence.
 
 ## 2. Color
 
@@ -68,10 +68,10 @@ These contracts describe the implemented MVP workbench and Chen renderer. The so
 
 ### Diagram Canvas
 - **Structure**: labelled, keyboard-focusable figure/work region, drawing surface, and empty and error explanation where appropriate.
-- **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG output is non-editable.
+- **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG structure is non-editable, with session-only entity-cluster repositioning.
 - **Spacing**: canvas padding `--space-8`; controls cluster `--space-2`; canvas gutters can grow with viewport.
 - **States**: default, empty, error, and zoomed (50%–200%).
-- **Accessibility**: SVG includes a title and description covering entities, attributes, keys, types, comments, relationships, and cardinality. The figure is keyboard-focusable and supports arrow-key scrolling. Zoom in/out and fit are native labeled buttons; current zoom is visible. Do not encode meaning by color alone.
+- **Accessibility**: SVG includes title and description. Entity groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
 - **Motion**: diagram output remains still; zoom changes scale without animation.
 - **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document.
 
@@ -85,6 +85,8 @@ These contracts describe the implemented MVP workbench and Chen renderer. The so
 - **Layout**: action cluster in editor chrome, wraps or stacks below the source on narrow screens.
 
 ## 6. Motion & Interaction
+
+Native SVG pointer gesture follows drag-gesture/pointer-capture mechanics: pointer coordinates convert through SVG CTM, movement recomputes cluster positions and connectors, and cancellation ends gesture. Keyboard arrows nudge focused clusters; reset clears offsets. Positions are in-memory only and reset on reload. No semantic diagram editing or persistence.
 
 | Intent | Duration | Easing |
 |---|---:|---|

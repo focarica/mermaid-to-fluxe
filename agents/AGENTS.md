@@ -5,7 +5,7 @@
 Vite + vanilla TypeScript browser app (Bun 1.4.2). Parses a supported subset of Mermaid `erDiagram` into a static, handmade Chen-notation SVG preview and exports PNG.
 
 - Do not promise complete Mermaid compatibility: the parser reports malformed/unsupported input with line-aware errors.
-- MVP has no React, backend, persistence, or diagram editing. Editing is future product direction — discuss scope with the user before extending beyond the MVP.
+- MVP has no React, backend, or persistence. Limited session-only repositioning of an entity with its owned attributes is supported; arbitrary diagram editing and persistent positions remain out of scope and require separate discussion.
 - Run the verification commands below locally before finishing (CI runs the same checks on push to `main`).
 
 ## Commands

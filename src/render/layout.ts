@@ -37,7 +37,10 @@ export type DiagramLayout = {
 
 const padding = 48;
 const entityHeight = 58;
-export function layoutDiagram(diagram: Diagram): DiagramLayout {
+export function layoutDiagram(
+  diagram: Diagram,
+  positionOffsets: ReadonlyMap<string, Point> = new Map(),
+): DiagramLayout {
   const clearance = 24;
   const entityWidths = diagram.entities.map((entity) =>
     Math.max(144, entity.name.length * 10 + 36),
@@ -72,6 +75,13 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
     const attributeRadius = attributeRadii[index] ?? 0;
     const entityRadius = entityRadii[index] ?? 0;
     const entityClearance = entityRadius + attributeRadius + clearance;
+    const incident = diagram.relationships.filter(
+      (relationship) =>
+        relationship.from === entity.name || relationship.to === entity.name,
+    );
+    const incidentAngles = incident.map((relationship) =>
+      relationship.from === entity.name ? 0 : Math.PI,
+    );
     const angularGap = selfRelationshipEntities.has(entity.name)
       ? Math.PI / (count + 1)
       : (Math.PI * 2) / count;
@@ -79,7 +89,31 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       count === 1 && !selfRelationshipEntities.has(entity.name)
         ? 0
         : (2 * attributeRadius + clearance) / (2 * Math.sin(angularGap / 2));
-    return Math.max(entityClearance, attributeClearance);
+    const angleCandidates = Array.from(
+      { length: Math.max(count, 1) },
+      (_, slot) => -Math.PI / 2 + (slot * Math.PI * 2) / Math.max(count, 1),
+    );
+    const directionClearance =
+      incidentAngles.length === 0
+        ? 0
+        : Math.max(
+              ...angleCandidates.map((angle) =>
+                Math.min(
+                  ...incidentAngles.map((incidentAngle) =>
+                    Math.abs(
+                      Math.atan2(
+                        Math.sin(angle - incidentAngle),
+                        Math.cos(angle - incidentAngle),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ) <
+            Math.PI / 3
+          ? entityClearance + attributeRadius
+          : 0;
+    return Math.max(entityClearance, attributeClearance, directionClearance);
   });
   const groupExtent = Math.max(
     ...entityRadii,
@@ -93,8 +127,8 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       (relationship) => relationship.label.length * 9 + 42,
     ),
   );
-  const entityGap = groupExtent * 2 + widestRelationship + 96;
-  const verticalGap = groupExtent * 2 + 72 + clearance * 2;
+  const entityGap = groupExtent * 2 + widestRelationship + 48;
+  const verticalGap = groupExtent * 2 + 56 + clearance;
   const adjacency = new Map(
     diagram.entities.map((entity) => [entity.name, new Set<string>()]),
   );
@@ -185,12 +219,18 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
         row: rows.get(name) ?? 0,
       });
     }
-    componentOffset += maximumLevel + 2;
+    componentOffset += maximumLevel + 1;
   }
   const entities = diagram.entities.map((entity, index) => ({
     name: entity.name,
-    x: padding + (positions.get(entity.name)?.column ?? index) * entityGap,
-    y: padding + (positions.get(entity.name)?.row ?? 0) * verticalGap,
+    x:
+      padding +
+      (positions.get(entity.name)?.column ?? index) * entityGap +
+      (positionOffsets.get(entity.name)?.x ?? 0),
+    y:
+      padding +
+      (positions.get(entity.name)?.row ?? 0) * verticalGap +
+      (positionOffsets.get(entity.name)?.y ?? 0),
     width: entityWidths[index] ?? 144,
     height: entityHeight,
   }));

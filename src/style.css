@@ -310,6 +310,15 @@ code {
   height: auto;
 }
 
+.diagram-output [data-entity]:focus-visible {
+  outline: var(--space-1) solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+
+.diagram-output [data-entity] {
+  touch-action: none;
+}
+
 .status {
   min-height: 1.4em;
 }

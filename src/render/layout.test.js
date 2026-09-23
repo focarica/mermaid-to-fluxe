@@ -25,6 +25,19 @@ const diagram = {
 };
 
 describe("layoutDiagram", () => {
+  test("packs disconnected entities without an unused component column", () => {
+    const layout = layoutDiagram({
+      entities: ["First", "Second", "Third"].map((name) => ({
+        name,
+        attributes: [],
+      })),
+      relationships: [],
+    });
+    const positions = layout.entities.map(({ x }) => x).sort((a, b) => a - b);
+    expect(positions[1] - (positions[0] ?? 0)).toBeLessThan(500);
+    expect(positions[2] - (positions[1] ?? 0)).toBeLessThan(500);
+  });
+
   test("uses relationship topology to place connected neighbors in 2D", () => {
     const branching = {
       entities: ["Root", "Leaf A", "Leaf B", "Leaf C", "Tail", "Island"].map(
@@ -317,6 +330,95 @@ describe("layoutDiagram", () => {
     expect(layout.attributes).toHaveLength(3);
     expect(layout.bounds.width).toBeGreaterThan(0);
     expect(layout.bounds.height).toBeGreaterThan(0);
+  });
+
+  test("applies named position offsets to entity clusters and recomputes links", () => {
+    const base = layoutDiagram(diagram);
+    const moved = layoutDiagram(
+      diagram,
+      new Map([["Customer", { x: 120, y: 75 }]]),
+    );
+    const customer = base.entities.find(({ name }) => name === "Customer");
+    const movedCustomer = moved.entities.find(
+      ({ name }) => name === "Customer",
+    );
+    const attribute = base.attributes.find(
+      ({ entity }) => entity === "Customer",
+    );
+    const movedAttribute = moved.attributes.find(
+      ({ entity }) => entity === "Customer",
+    );
+    expect(customer).toBeDefined();
+    expect(movedCustomer).toBeDefined();
+    expect(attribute).toBeDefined();
+    expect(movedAttribute).toBeDefined();
+    if (!customer || !movedCustomer || !attribute || !movedAttribute)
+      throw new Error("Expected moved cluster");
+    expect(movedCustomer.x - customer.x).toBe(120);
+    expect(movedCustomer.y - customer.y).toBe(75);
+    expect(movedAttribute.x - attribute.x).toBeCloseTo(120);
+    expect(movedAttribute.y - attribute.y).toBeCloseTo(75);
+    expect(movedAttribute.anchor.x - attribute.anchor.x).toBe(120);
+    expect(movedAttribute.anchor.y - attribute.anchor.y).toBe(75);
+    expect(moved.relationships[0]?.links).not.toEqual(
+      base.relationships[0]?.links,
+    );
+    expect(moved.relationships[0]?.center).not.toEqual(
+      base.relationships[0]?.center,
+    );
+  });
+
+  test("keeps relationship connector segments outside attribute and type-label boxes", () => {
+    const crowded = {
+      entities: [
+        {
+          name: "Root",
+          attributes: [{ name: "root_field", type: "varchar(255)", keys: [] }],
+        },
+        ...["North", "East", "South", "West"].map((name) => ({
+          name,
+          attributes: [
+            {
+              name: `${name.toLowerCase()}_field`,
+              type: "varchar(255)",
+              keys: [],
+            },
+          ],
+        })),
+      ],
+      relationships: ["North", "East", "South", "West"].map((to) => ({
+        from: "Root",
+        to,
+        fromCardinality: "one",
+        toCardinality: "many",
+        identifying: false,
+        label: "owns",
+      })),
+    };
+    const layout = layoutDiagram(crowded);
+    const intersects = (from, to, box) => {
+      const steps = 100;
+      return Array.from(
+        { length: steps + 1 },
+        (_, index) => index / steps,
+      ).some((ratio) => {
+        const x = from.x + (to.x - from.x) * ratio;
+        const y = from.y + (to.y - from.y) * ratio;
+        return (
+          x >= box.x &&
+          x <= box.x + box.width &&
+          y >= box.y &&
+          y <= box.y + box.height + (box.type ? 24 : 0)
+        );
+      });
+    };
+    for (const relationship of layout.relationships) {
+      for (const link of relationship.links) {
+        for (const field of layout.attributes) {
+          expect(intersects(link.from, link.to, field)).toBe(false);
+        }
+      }
+    }
   });
 
   test("is deterministic and keeps long content within expanded bounds", () => {

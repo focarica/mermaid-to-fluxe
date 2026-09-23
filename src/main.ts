@@ -44,13 +44,14 @@ app.innerHTML = `
               <button class="zoom-button" id="zoom-in" type="button" aria-label="Zoom in">+</button>
               <button class="zoom-button zoom-fit" id="zoom-fit" type="button">Fit</button>
             </div>
-            <button class="export-button" id="export" type="button" disabled>Download PNG</button>
+             <button class="zoom-button" id="reset-layout" type="button" disabled>Reset layout</button>
+             <button class="export-button" id="export" type="button" disabled>Download PNG</button>
           </div>
         </div>
         <figure class="diagram-surface" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
         </figure>
-        <p class="hint" id="diagram-scroll-hint">Wide diagrams may need horizontal scrolling.</p>
+        <p class="hint" id="diagram-scroll-hint">Drag entity groups to reposition; arrow keys nudge focused groups. Positions last for this session only. Wide diagrams may need horizontal scrolling.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
       </section>
     </div>
@@ -65,6 +66,8 @@ const zoomOutButton = document.querySelector<HTMLButtonElement>("#zoom-out");
 const zoomInButton = document.querySelector<HTMLButtonElement>("#zoom-in");
 const zoomFitButton = document.querySelector<HTMLButtonElement>("#zoom-fit");
 const zoomLevel = document.querySelector<HTMLOutputElement>("#zoom-level");
+const resetLayoutButton =
+  document.querySelector<HTMLButtonElement>("#reset-layout");
 const diagramSurface = document.querySelector<HTMLElement>(".diagram-surface");
 if (
   !source ||
@@ -76,6 +79,7 @@ if (
   !zoomInButton ||
   !zoomFitButton ||
   !zoomLevel ||
+  !resetLayoutButton ||
   !diagramSurface
 ) {
   throw new Error("Workbench controls are missing");
@@ -89,17 +93,34 @@ const zoomOut = zoomOutButton;
 const zoomIn = zoomInButton;
 const zoomFit = zoomFitButton;
 const zoomReadout = zoomLevel;
+const resetLayout = resetLayoutButton;
 
 sourceControl.value = sample;
 let currentSvg: SVGSVGElement | undefined;
+let currentDiagram: ReturnType<typeof parseErDiagram> | undefined;
+const positionOffsets = new Map<string, { x: number; y: number }>();
 let zoom = 1;
+let drag:
+  | {
+      name: string;
+      pointerId: number;
+      lastClient: { x: number; y: number };
+      viewBox: string;
+      width: number;
+      height: number;
+    }
+  | undefined;
 const minimumZoom = 0.5;
 const maximumZoom = 2;
 const zoomStep = 0.25;
 
 function updateZoom(): void {
   const svg = currentSvg;
-  if (svg) svg.style.width = `${zoom * 100}%`;
+  if (svg) {
+    svg.style.width = `${zoom * 100}%`;
+    svg.style.height = "";
+    svg.style.transform = "";
+  }
   outputRegion.classList.toggle("is-zoomed", zoom > 1);
   zoomReadout.value = `${Math.round(zoom * 100)}%`;
   zoomReadout.textContent = zoomReadout.value;
@@ -112,9 +133,13 @@ function updateZoom(): void {
 function updatePreview(): void {
   try {
     const diagram = parseErDiagram(sourceControl.value);
-    const svg = renderDiagram(diagram);
+    const retainedNames = new Set(diagram.entities.map(({ name }) => name));
+    for (const name of positionOffsets.keys())
+      if (!retainedNames.has(name)) positionOffsets.delete(name);
+    const svg = renderDiagram(diagram, document, positionOffsets);
     outputRegion.replaceChildren(svg);
     currentSvg = svg;
+    currentDiagram = diagram;
     updateZoom();
     sourceControl.removeAttribute("aria-invalid");
     errorMessage.textContent = "";
@@ -122,17 +147,145 @@ function updatePreview(): void {
     const relationshipCount = diagram.relationships.length;
     statusMessage.textContent = `${entityCount} ${entityCount === 1 ? "entity" : "entities"} · ${relationshipCount} ${relationshipCount === 1 ? "relationship" : "relationships"}`;
     pngButton.disabled = false;
+    resetLayout.disabled = positionOffsets.size === 0;
   } catch (cause) {
     if (!(cause instanceof ErParseError)) throw cause;
     outputRegion.replaceChildren();
     currentSvg = undefined;
+    currentDiagram = undefined;
     updateZoom();
     sourceControl.setAttribute("aria-invalid", "true");
     errorMessage.textContent = cause.message;
     statusMessage.textContent = "Fix the source to generate a diagram.";
     pngButton.disabled = true;
+    resetLayout.disabled = true;
   }
 }
+
+function diagramPoint(
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } | undefined {
+  const svg = currentSvg;
+  const matrix = svg?.getScreenCTM();
+  if (!svg || !matrix) return undefined;
+  const local = new DOMPoint(clientX, clientY).matrixTransform(
+    matrix.inverse(),
+  );
+  return { x: local.x, y: local.y };
+}
+
+outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (event.button !== 0 || !event.isPrimary) return;
+  const group =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("[data-entity]")
+      : null;
+  const name = group?.getAttribute("data-entity");
+  if (!group || !name || !diagramPoint(event.clientX, event.clientY)) return;
+  const viewBox = currentSvg?.getAttribute("viewBox");
+  const svgBounds = currentSvg?.getBoundingClientRect();
+  if (!viewBox || !svgBounds) return;
+  drag = {
+    name,
+    pointerId: event.pointerId,
+    lastClient: { x: event.clientX, y: event.clientY },
+    viewBox,
+    width: svgBounds.width,
+    height: svgBounds.height,
+  };
+  outputRegion.classList.add("is-dragging");
+  outputRegion.style.cursor = "grabbing";
+  outputRegion.setPointerCapture(event.pointerId);
+  group.style.cursor = "grabbing";
+  event.preventDefault();
+});
+outputRegion.addEventListener("pointermove", (event: PointerEvent) => {
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const point = diagramPoint(event.clientX, event.clientY);
+  const previousPoint = diagramPoint(drag.lastClient.x, drag.lastClient.y);
+  if (!point || !previousPoint || !currentDiagram) return;
+  const offset = positionOffsets.get(drag.name) ?? { x: 0, y: 0 };
+  positionOffsets.set(drag.name, {
+    x: offset.x + point.x - previousPoint.x,
+    y: offset.y + point.y - previousPoint.y,
+  });
+  drag.lastClient = { x: event.clientX, y: event.clientY };
+  const svg = renderDiagram(currentDiagram, document, positionOffsets);
+  svg.setAttribute("viewBox", drag.viewBox);
+  svg
+    .querySelector<SVGGElement>(`[data-entity="${CSS.escape(drag.name)}"]`)
+    ?.style.setProperty("cursor", "grabbing");
+  outputRegion.replaceChildren(svg);
+  currentSvg = svg;
+  updateZoom();
+  svg.style.width = `${drag.width}px`;
+  svg.style.height = `${drag.height}px`;
+  svg.style.overflow = "visible";
+  resetLayout.disabled = false;
+});
+const endDrag = (event: PointerEvent): void => {
+  const activeDrag = drag;
+  if (activeDrag?.pointerId !== event.pointerId) return;
+  const previousSvg = currentSvg;
+  const previousBounds = previousSvg?.getBoundingClientRect();
+  const previousMatrix = previousSvg?.getScreenCTM();
+  const previousViewBox = previousSvg?.viewBox.baseVal;
+  drag = undefined;
+  outputRegion.classList.remove("is-dragging");
+  outputRegion.style.removeProperty("cursor");
+  if (!currentDiagram || !previousBounds || !previousMatrix || !previousViewBox)
+    return;
+  const svg = renderDiagram(currentDiagram, document, positionOffsets);
+  outputRegion.replaceChildren(svg);
+  currentSvg = svg;
+  updateZoom();
+  const viewBox = svg.viewBox.baseVal;
+  const scaleX = previousMatrix.a;
+  const scaleY = previousMatrix.d;
+  const desiredLeft =
+    previousBounds.left + (viewBox.x - previousViewBox.x) * scaleX;
+  const desiredTop =
+    previousBounds.top + (viewBox.y - previousViewBox.y) * scaleY;
+  svg.style.width = `${viewBox.width * scaleX}px`;
+  svg.style.height = `${viewBox.height * scaleY}px`;
+  const expandedBounds = svg.getBoundingClientRect();
+  svg.style.transform = `translate(${desiredLeft - expandedBounds.left}px, ${desiredTop - expandedBounds.top}px)`;
+  resetLayout.disabled = positionOffsets.size === 0;
+};
+outputRegion.addEventListener("pointerup", endDrag);
+outputRegion.addEventListener("pointercancel", endDrag);
+outputRegion.addEventListener("lostpointercapture", endDrag);
+
+outputRegion.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (
+    !currentDiagram ||
+    !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+  )
+    return;
+  const group =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("[data-entity]")
+      : null;
+  const name = group?.getAttribute("data-entity");
+  if (!name) return;
+  event.preventDefault();
+  const offset = positionOffsets.get(name) ?? { x: 0, y: 0 };
+  const step = event.shiftKey ? 20 : 8;
+  const dx =
+    event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+  const dy =
+    event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+  positionOffsets.set(name, { x: offset.x + dx, y: offset.y + dy });
+  const svg = renderDiagram(currentDiagram, document, positionOffsets);
+  outputRegion.replaceChildren(svg);
+  currentSvg = svg;
+  updateZoom();
+  resetLayout.disabled = false;
+  outputRegion
+    .querySelector<SVGGElement>(`[data-entity="${CSS.escape(name)}"]`)
+    ?.focus();
+});
 
 function downloadPng(): void {
   const svg = currentSvg;
@@ -186,6 +339,16 @@ function downloadPng(): void {
 }
 
 sourceControl.addEventListener("input", updatePreview);
+resetLayout.addEventListener("click", () => {
+  positionOffsets.clear();
+  const diagram = currentDiagram;
+  if (!diagram) return;
+  const svg = renderDiagram(diagram, document, positionOffsets);
+  outputRegion.replaceChildren(svg);
+  currentSvg = svg;
+  updateZoom();
+  resetLayout.disabled = true;
+});
 pngButton.addEventListener("click", downloadPng);
 zoomOut.addEventListener("click", () => {
   zoom = Math.max(minimumZoom, zoom - zoomStep);
@@ -201,6 +364,8 @@ zoomFit.addEventListener("click", () => {
   updateZoom();
 });
 diagramSurface.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.target instanceof Element && event.target.closest("[data-entity]"))
+    return;
   const scrollStep = 120;
   switch (event.key) {
     case "ArrowLeft":

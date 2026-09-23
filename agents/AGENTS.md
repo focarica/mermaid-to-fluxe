@@ -6,7 +6,7 @@ Vite + vanilla TypeScript browser app (Bun 1.4.2). Parses a supported subset of 
 
 - Do not promise complete Mermaid compatibility: the parser reports malformed/unsupported input with line-aware errors.
 - MVP has no React, backend, persistence, or diagram editing. Editing is future product direction — discuss scope with the user before extending beyond the MVP.
-- No CI. Run verification locally before finishing.
+- Run the verification commands below locally before finishing (CI runs the same checks on push to `main`).
 
 ## Commands
 
@@ -21,6 +21,14 @@ bun run build      # tsc --noEmit && vite build
 
 - Single test file: `bun test src/parser/parser.test.js`
 - Filter by name: `bun test -t "maps cardinality"`
+
+## Deployment
+
+GitHub Actions (`.github/workflows/deploy.yml`) runs test/typecheck/lint/build on every push to `main` and on manual dispatch, then publishes `dist/` to the `gh-pages` branch with `GITHUB_TOKEN` (branch-based Pages strategy, not the Pages Actions artifact deploy).
+
+- Production `base` is `/mermaid-to-fluxe/` (set in `vite.config.ts` for `mode === "production"`); dev server stays at `/`.
+- One-time repo setup: Settings → Pages → "Deploy from a branch" → branch `gh-pages`, folder `/(root)`.
+- Live URL: <https://focarica.github.io/mermaid-to-fluxe/>
 
 ## Toolchain quirks
 

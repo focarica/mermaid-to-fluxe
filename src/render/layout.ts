@@ -38,16 +38,65 @@ export type DiagramLayout = {
 const padding = 48;
 const entityHeight = 58;
 export function layoutDiagram(diagram: Diagram): DiagramLayout {
-  const widestEntity = Math.max(
-    144,
-    ...diagram.entities.map((entity) => entity.name.length * 10 + 36),
+  const clearance = 24;
+  const entityWidths = diagram.entities.map((entity) =>
+    Math.max(144, entity.name.length * 10 + 36),
   );
-  const entityGap = widestEntity + 220;
+  const attributeWidths = diagram.entities.map((entity) =>
+    Math.max(
+      116,
+      ...entity.attributes.map((attribute) => {
+        const keyLabel =
+          attribute.keys.length > 0 ? `  ${attribute.keys.join("/")}` : "";
+        return (attribute.name.length + keyLabel.length) * 9 + 36;
+      }),
+    ),
+  );
+  const attributeRadii = attributeWidths.map((width) =>
+    Math.hypot(width / 2, 24),
+  );
+  const entityRadii = entityWidths.map((width) =>
+    Math.hypot(width / 2, entityHeight / 2),
+  );
+  const selfRelationshipEntities = new Set(
+    diagram.relationships
+      .filter((relationship) => relationship.from === relationship.to)
+      .map((relationship) => relationship.from),
+  );
+  const orbitRadii = diagram.entities.map((entity, index) => {
+    const count = entity.attributes.length;
+    if (count === 0) return 0;
+    const attributeRadius = attributeRadii[index] ?? 0;
+    const entityRadius = entityRadii[index] ?? 0;
+    const entityClearance = entityRadius + attributeRadius + clearance;
+    const angularGap = selfRelationshipEntities.has(entity.name)
+      ? Math.PI / (count + 1)
+      : (Math.PI * 2) / count;
+    const attributeClearance =
+      count === 1 && !selfRelationshipEntities.has(entity.name)
+        ? 0
+        : (2 * attributeRadius + clearance) / (2 * Math.sin(angularGap / 2));
+    return Math.max(entityClearance, attributeClearance);
+  });
+  const groupExtent = Math.max(
+    ...entityRadii,
+    ...orbitRadii.map(
+      (radius, index) => radius + (attributeRadii[index] ?? 0) + clearance,
+    ),
+  );
+  const widestRelationship = Math.max(
+    112,
+    ...diagram.relationships.map(
+      (relationship) => relationship.label.length * 9 + 42,
+    ),
+  );
+  const entityGap = groupExtent * 2 + widestRelationship + 96;
+  const centerY = padding + groupExtent + entityHeight / 2;
   const entities = diagram.entities.map((entity, index) => ({
     name: entity.name,
     x: padding + index * entityGap,
-    y: padding + (index % 2) * 42,
-    width: Math.max(144, entity.name.length * 10 + 36),
+    y: centerY - entityHeight / 2,
+    width: entityWidths[index] ?? 144,
     height: entityHeight,
   }));
   const findEntity = (name: string): EntityShape =>
@@ -59,12 +108,14 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       height: entityHeight,
     };
   const attributes: AttributeShape[] = [];
-  for (const entity of diagram.entities) {
+  for (const [entityIndex, entity] of diagram.entities.entries()) {
     const shape = findEntity(entity.name);
     entity.attributes.forEach((attribute, index) => {
-      const angle =
-        -Math.PI / 2 +
-        (index * Math.PI * 2) / Math.max(entity.attributes.length, 1);
+      const angle = selfRelationshipEntities.has(entity.name)
+        ? Math.PI / (entity.attributes.length + 1) +
+          (index * Math.PI) / (entity.attributes.length + 1)
+        : -Math.PI / 2 +
+          (index * Math.PI * 2) / Math.max(entity.attributes.length, 1);
       const keyLabel =
         attribute.keys.length > 0 ? `  ${attribute.keys.join("/")}` : "";
       const width = Math.max(
@@ -76,10 +127,7 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
         x: shape.x + shape.width / 2,
         y: shape.y + shape.height / 2,
       };
-      const radius =
-        Math.max(shape.width, shape.height) / 2 +
-        78 +
-        Math.max(0, entity.attributes.length - 4) * 12;
+      const radius = orbitRadii[entityIndex] ?? 0;
       attributes.push({
         entity: entity.name,
         name: attribute.name,
@@ -107,26 +155,59 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       x: toEntity.x + toEntity.width / 2,
       y: toEntity.y + toEntity.height / 2,
     };
-    const center = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
     const width = Math.max(112, relationship.label.length * 9 + 42);
+    const height = 72;
+    const isSelfRelationship = relationship.from === relationship.to;
+    const center = isSelfRelationship
+      ? {
+          x: from.x,
+          y: from.y - fromEntity.height / 2 - height / 2 - clearance,
+        }
+      : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const links = isSelfRelationship
+      ? [
+          {
+            from: {
+              x: from.x - Math.min(fromEntity.width / 4, 24),
+              y: from.y - fromEntity.height / 2,
+            },
+            to: {
+              x: center.x - width / 4,
+              y: center.y + height / 4,
+            },
+            cardinality: relationship.fromCardinality,
+          },
+          {
+            from: {
+              x: center.x + width / 4,
+              y: center.y + height / 4,
+            },
+            to: {
+              x: to.x + toEntity.width / 4,
+              y: to.y - toEntity.height / 2,
+            },
+            cardinality: relationship.toCardinality,
+          },
+        ]
+      : [
+          {
+            from: { x: from.x + fromEntity.width / 2, y: from.y },
+            to: { x: center.x - width / 2, y: center.y },
+            cardinality: relationship.fromCardinality,
+          },
+          {
+            from: { x: center.x + width / 2, y: center.y },
+            to: { x: to.x - toEntity.width / 2, y: to.y },
+            cardinality: relationship.toCardinality,
+          },
+        ];
     return {
       label: relationship.label,
       identifying: relationship.identifying,
       center,
       width,
-      height: 72,
-      links: [
-        {
-          from: { x: from.x + fromEntity.width / 2, y: from.y },
-          to: { x: center.x - width / 2, y: center.y },
-          cardinality: relationship.fromCardinality,
-        },
-        {
-          from: { x: center.x + width / 2, y: center.y },
-          to: { x: to.x - toEntity.width / 2, y: to.y },
-          cardinality: relationship.toCardinality,
-        },
-      ],
+      height,
+      links,
     };
   });
   const extents = [

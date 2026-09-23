@@ -48,7 +48,10 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       ...entity.attributes.map((attribute) => {
         const keyLabel =
           attribute.keys.length > 0 ? `  ${attribute.keys.join("/")}` : "";
-        return (attribute.name.length + keyLabel.length) * 9 + 36;
+        return Math.max(
+          (attribute.name.length + keyLabel.length) * 9 + 36,
+          (attribute.type?.length ?? 0) * 7 + 24,
+        );
       }),
     ),
   );
@@ -81,7 +84,7 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
   const groupExtent = Math.max(
     ...entityRadii,
     ...orbitRadii.map(
-      (radius, index) => radius + (attributeRadii[index] ?? 0) + clearance,
+      (radius, index) => radius + (attributeRadii[index] ?? 0) + clearance + 12,
     ),
   );
   const widestRelationship = Math.max(
@@ -91,11 +94,103 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
     ),
   );
   const entityGap = groupExtent * 2 + widestRelationship + 96;
-  const centerY = padding + groupExtent + entityHeight / 2;
+  const verticalGap = groupExtent * 2 + 72 + clearance * 2;
+  const adjacency = new Map(
+    diagram.entities.map((entity) => [entity.name, new Set<string>()]),
+  );
+  for (const relationship of diagram.relationships) {
+    adjacency.get(relationship.from)?.add(relationship.to);
+    adjacency.get(relationship.to)?.add(relationship.from);
+  }
+  const positions = new Map<
+    string,
+    { readonly column: number; readonly row: number }
+  >();
+  const entityOrder = new Map(
+    diagram.entities.map((entity, index) => [entity.name, index]),
+  );
+  let componentOffset = 0;
+  for (const entity of [...diagram.entities].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    if (positions.has(entity.name)) continue;
+    const component = new Set<string>();
+    const pending = [entity.name];
+    while (pending.length > 0) {
+      const name = pending.pop();
+      if (!name || component.has(name)) continue;
+      component.add(name);
+      pending.push(...(adjacency.get(name) ?? []));
+    }
+    const root = [...component].sort((left, right) => {
+      const degreeDifference =
+        (adjacency.get(right)?.size ?? 0) - (adjacency.get(left)?.size ?? 0);
+      return (
+        degreeDifference ||
+        left.localeCompare(right) ||
+        (entityOrder.get(left) ?? 0) - (entityOrder.get(right) ?? 0)
+      );
+    })[0];
+    if (!root) continue;
+    const levels = new Map<string, number>([[root, 0]]);
+    const queue = [root];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) continue;
+      const nextLevel = (levels.get(current) ?? 0) + 1;
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (!component.has(neighbor) || levels.has(neighbor)) continue;
+        levels.set(neighbor, nextLevel);
+        queue.push(neighbor);
+      }
+    }
+    const maximumLevel = Math.max(0, ...levels.values());
+    const rows = new Map<string, number>([[root, 0]]);
+    for (let level = 1; level <= maximumLevel; level += 1) {
+      const layer = [...component].filter((name) => levels.get(name) === level);
+      const parentRow = (name: string): number => {
+        const parents = [...(adjacency.get(name) ?? [])].filter(
+          (parent) => levels.get(parent) === level - 1,
+        );
+        return parents.length === 0
+          ? 0
+          : parents.reduce((sum, parent) => sum + (rows.get(parent) ?? 0), 0) /
+              parents.length;
+      };
+      layer.sort(
+        (left, right) =>
+          parentRow(left) - parentRow(right) ||
+          (entityOrder.get(left) ?? 0) - (entityOrder.get(right) ?? 0) ||
+          left.localeCompare(right),
+      );
+      const parentCenter =
+        layer.reduce((sum, name) => sum + parentRow(name), 0) / layer.length;
+      const rowValues = layer.map(
+        (name, index) => parentRow(name) + index - (layer.length - 1) / 2,
+      );
+      for (let index = 1; index < rowValues.length; index += 1) {
+        const previous = rowValues[index - 1] ?? 0;
+        const current = rowValues[index] ?? previous + 1;
+        rowValues[index] = Math.max(current, previous + 1);
+      }
+      const rowCenter =
+        rowValues.reduce((sum, row) => sum + row, 0) / rowValues.length;
+      layer.forEach((name, row) => {
+        rows.set(name, (rowValues[row] ?? row) + parentCenter - rowCenter);
+      });
+    }
+    for (const name of component) {
+      positions.set(name, {
+        column: componentOffset + (levels.get(name) ?? 0),
+        row: rows.get(name) ?? 0,
+      });
+    }
+    componentOffset += maximumLevel + 2;
+  }
   const entities = diagram.entities.map((entity, index) => ({
     name: entity.name,
-    x: padding + index * entityGap,
-    y: centerY - entityHeight / 2,
+    x: padding + (positions.get(entity.name)?.column ?? index) * entityGap,
+    y: padding + (positions.get(entity.name)?.row ?? 0) * verticalGap,
     width: entityWidths[index] ?? 144,
     height: entityHeight,
   }));
@@ -121,6 +216,7 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
       const width = Math.max(
         116,
         (attribute.name.length + keyLabel.length) * 9 + 36,
+        (attribute.type?.length ?? 0) * 7 + 24,
       );
       const height = 48;
       const anchor = {
@@ -164,6 +260,25 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
           y: from.y - fromEntity.height / 2 - height / 2 - clearance,
         }
       : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const boundaryPoint = (
+      origin: Point,
+      toward: Point,
+      box: EntityShape,
+    ): Point => {
+      const dx = toward.x - origin.x;
+      const dy = toward.y - origin.y;
+      const scale = Math.max(
+        Math.abs(dx) / (box.width / 2),
+        Math.abs(dy) / (box.height / 2),
+      );
+      return { x: origin.x + dx / scale, y: origin.y + dy / scale };
+    };
+    const diamondPoint = (toward: Point): Point => {
+      const dx = toward.x - center.x;
+      const dy = toward.y - center.y;
+      const scale = Math.abs(dx) / (width / 2) + Math.abs(dy) / (height / 2);
+      return { x: center.x + dx / scale, y: center.y + dy / scale };
+    };
     const links = isSelfRelationship
       ? [
           {
@@ -191,13 +306,13 @@ export function layoutDiagram(diagram: Diagram): DiagramLayout {
         ]
       : [
           {
-            from: { x: from.x + fromEntity.width / 2, y: from.y },
-            to: { x: center.x - width / 2, y: center.y },
+            from: boundaryPoint(from, center, fromEntity),
+            to: diamondPoint(from),
             cardinality: relationship.fromCardinality,
           },
           {
-            from: { x: center.x + width / 2, y: center.y },
-            to: { x: to.x - toEntity.width / 2, y: to.y },
+            from: diamondPoint(to),
+            to: boundaryPoint(to, center, toEntity),
             cardinality: relationship.toCardinality,
           },
         ];

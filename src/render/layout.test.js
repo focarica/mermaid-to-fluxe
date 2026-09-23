@@ -25,6 +25,290 @@ const diagram = {
 };
 
 describe("layoutDiagram", () => {
+  test("uses relationship topology to place connected neighbors in 2D", () => {
+    const branching = {
+      entities: ["Root", "Leaf A", "Leaf B", "Leaf C", "Tail", "Island"].map(
+        (name) => ({
+          name,
+          attributes: [],
+        }),
+      ),
+      relationships: [
+        {
+          from: "Root",
+          to: "Leaf A",
+          fromCardinality: "one",
+          toCardinality: "one",
+          identifying: false,
+          label: "a",
+        },
+        {
+          from: "Root",
+          to: "Leaf B",
+          fromCardinality: "one",
+          toCardinality: "one",
+          identifying: false,
+          label: "b",
+        },
+        {
+          from: "Root",
+          to: "Leaf C",
+          fromCardinality: "one",
+          toCardinality: "one",
+          identifying: false,
+          label: "d",
+        },
+        {
+          from: "Leaf A",
+          to: "Tail",
+          fromCardinality: "one",
+          toCardinality: "one",
+          identifying: false,
+          label: "c",
+        },
+      ],
+    };
+    const layout = layoutDiagram(branching);
+    const byName = new Map(
+      layout.entities.map((entity) => [entity.name, entity]),
+    );
+    const root = byName.get("Root");
+    const leafA = byName.get("Leaf A");
+    const leafB = byName.get("Leaf B");
+    expect(root).toBeDefined();
+    expect(leafA).toBeDefined();
+    expect(leafB).toBeDefined();
+    if (!root || !leafA || !leafB) throw new Error("Expected branch entities");
+    expect(
+      new Set(layout.entities.map((entity) => entity.y)).size,
+    ).toBeGreaterThan(1);
+    const siblings = [leafA, leafB, byName.get("Leaf C")];
+    const siblingRows = siblings.map((entity) => entity.y);
+    expect(Math.min(...siblingRows)).toBeLessThan(root.y);
+    expect(Math.max(...siblingRows)).toBeGreaterThan(root.y);
+    expect(
+      siblingRows.reduce((sum, row) => sum + row, 0) / siblingRows.length,
+    ).toBeCloseTo(root.y);
+    const orderedSiblingRows = [...siblingRows].sort(
+      (left, right) => left - right,
+    );
+    const siblingGaps = orderedSiblingRows
+      .slice(1)
+      .map((row, index) => row - (orderedSiblingRows[index] ?? row));
+    const gridGap = Math.min(...siblingGaps);
+    expect(gridGap).toBeGreaterThan(100);
+    const distance = (left, right) =>
+      Math.hypot(
+        left.x + left.width / 2 - right.x - right.width / 2,
+        left.y + left.height / 2 - right.y - right.height / 2,
+      );
+    const connectedMean =
+      (distance(root, leafA) +
+        distance(root, leafB) +
+        distance(root, byName.get("Leaf C")) +
+        distance(leafA, byName.get("Tail"))) /
+      4;
+    const localNonEdges = [
+      distance(root, byName.get("Tail")),
+      distance(leafA, leafB),
+      distance(leafB, byName.get("Tail")),
+      distance(byName.get("Leaf C"), byName.get("Tail")),
+    ];
+    expect(connectedMean).toBeLessThan(
+      localNonEdges.reduce((sum, current) => sum + current, 0) /
+        localNonEdges.length,
+    );
+    expect(layout).toEqual(layoutDiagram(branching));
+    const reordered = {
+      ...branching,
+      entities: [...branching.entities].reverse(),
+    };
+    const reorderedLayout = layoutDiagram(reordered);
+    const rootShape = layout.entities.find((entity) => entity.name === "Root");
+    const reorderedRoot = reorderedLayout.entities.find(
+      (entity) => entity.name === "Root",
+    );
+    expect(rootShape).toBeDefined();
+    expect(reorderedRoot).toBeDefined();
+    if (!rootShape || !reorderedRoot) throw new Error("Expected stable root");
+    expect(rootShape.x).toBe(reorderedRoot.x);
+    expect(rootShape.y).toBe(reorderedRoot.y);
+    expect(byName.get("Tail")?.y).toBe(leafA.y);
+    const entityRows = layout.entities
+      .filter((entity) => entity.name !== "Island")
+      .map((entity) => entity.y);
+    expect(Math.max(...entityRows) - Math.min(...entityRows)).toBeLessThan(
+      3 * gridGap,
+    );
+  });
+
+  test("centers four siblings and keeps long relationship labels out of vertical spacing", () => {
+    const entities = ["Hub", "A", "B", "C", "D"].map((name) => ({
+      name,
+      attributes: [{ name: `${name}_id`, type: "varchar(255)", keys: ["PK"] }],
+    }));
+    const makeDiagram = (label) => ({
+      entities,
+      relationships: entities.slice(1).map((entity) => ({
+        from: "Hub",
+        to: entity.name,
+        fromCardinality: "one",
+        toCardinality: "zero-or-more",
+        identifying: false,
+        label,
+      })),
+    });
+    const shortLayout = layoutDiagram(makeDiagram("owns"));
+    const wideLayout = layoutDiagram(
+      makeDiagram("a_relationship_label_that_is_deliberately_very_wide"),
+    );
+    const centerRow = shortLayout.entities.find(
+      (entity) => entity.name === "Hub",
+    )?.y;
+    const siblingRows = shortLayout.entities
+      .filter((entity) => entity.name !== "Hub")
+      .map((entity) => entity.y)
+      .sort((left, right) => left - right);
+    expect(centerRow).toBeDefined();
+    expect(siblingRows).toHaveLength(4);
+    if (centerRow === undefined) throw new Error("Expected hub row");
+    expect(siblingRows[0]).toBeLessThan(centerRow);
+    expect(siblingRows[3]).toBeGreaterThan(centerRow);
+    expect((siblingRows[0] + siblingRows[3]) / 2).toBeCloseTo(centerRow);
+    expect(siblingRows[1] - (siblingRows[0] ?? 0)).toBeCloseTo(
+      siblingRows[2] - (siblingRows[1] ?? 0),
+    );
+    expect(siblingRows[2] - (siblingRows[1] ?? 0)).toBeCloseTo(
+      siblingRows[3] - (siblingRows[2] ?? 0),
+    );
+    const rows = (layout) =>
+      layout.entities
+        .map((entity) => [entity.name, entity.y])
+        .sort(([left], [right]) => left.localeCompare(right));
+    expect(rows(wideLayout)).toEqual(rows(shortLayout));
+    expect(wideLayout.bounds.width).toBeGreaterThan(shortLayout.bounds.width);
+    expect(wideLayout.bounds.height).toBe(shortLayout.bounds.height);
+  });
+
+  test("keeps entity clusters disjoint for chain, cycle, and isolated nodes", () => {
+    const entities = ["A", "B", "C", "D", "Solo"].map((name) => ({
+      name,
+      attributes: [
+        { name: `${name}_id`, keys: ["PK"] },
+        {
+          name: `${name}_detail`,
+          type: "a_very_long_varchar_type_that_sets_cluster_extent",
+          keys: [],
+        },
+      ],
+    }));
+    const relationships = [
+      ["A", "B"],
+      ["B", "C"],
+      ["C", "D"],
+      ["D", "A"],
+    ].map(([from, to]) => ({
+      from,
+      to,
+      fromCardinality: "one",
+      toCardinality: "zero-or-more",
+      identifying: false,
+      label: "connected",
+    }));
+    const layout = layoutDiagram({ entities, relationships });
+    expect(new Set(layout.entities.map(({ x }) => x)).size).toBeGreaterThan(1);
+    expect(new Set(layout.entities.map(({ y }) => y)).size).toBeGreaterThan(1);
+    expect(
+      layout.relationships.some((relationship) =>
+        relationship.links.some((link) => link.from.y !== link.to.y),
+      ),
+    ).toBe(true);
+    const clusters = layout.entities.map((entity) => {
+      const attached = layout.attributes.filter(
+        (attribute) => attribute.entity === entity.name,
+      );
+      return [entity, ...attached];
+    });
+    for (const [index, cluster] of clusters.entries()) {
+      for (const other of clusters.slice(index + 1)) {
+        for (const left of cluster) {
+          for (const right of other) {
+            expect(
+              left.x + left.width <= right.x ||
+                right.x + right.width <= left.x ||
+                left.y + left.height <= right.y ||
+                right.y + right.height <= left.y,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+    expect(
+      layout.entities.find((entity) => entity.name === "Solo"),
+    ).toBeDefined();
+    expect(layout).toEqual(layoutDiagram({ entities, relationships }));
+  });
+
+  test("routes vertical and diagonal relationship links onto both shape boundaries", () => {
+    const entities = ["A", "B", "C"].map((name) => ({ name, attributes: [] }));
+    const relationships = [
+      ["A", "B"],
+      ["B", "C"],
+    ].map(([from, to]) => ({
+      from,
+      to,
+      fromCardinality: "one",
+      toCardinality: "one",
+      identifying: false,
+      label: "joins",
+    }));
+    const layout = layoutDiagram({ entities, relationships });
+    for (const [index, relationship] of layout.relationships.entries()) {
+      const source = layout.entities.find(
+        (entity) => entity.name === relationships[index]?.from,
+      );
+      const target = layout.entities.find(
+        (entity) => entity.name === relationships[index]?.to,
+      );
+      expect(source).toBeDefined();
+      expect(target).toBeDefined();
+      if (!source || !target)
+        throw new Error("Expected relationship endpoints");
+      const sourceCenter = {
+        x: source.x + source.width / 2,
+        y: source.y + source.height / 2,
+      };
+      const targetCenter = {
+        x: target.x + target.width / 2,
+        y: target.y + target.height / 2,
+      };
+      for (const [point, center, shape] of [
+        [relationship.links[0]?.from, sourceCenter, source],
+        [relationship.links[1]?.to, targetCenter, target],
+      ]) {
+        if (!point) throw new Error("Expected entity boundary endpoint");
+        expect(
+          Math.max(
+            Math.abs(point.x - center.x) / (shape.width / 2),
+            Math.abs(point.y - center.y) / (shape.height / 2),
+          ),
+        ).toBeCloseTo(1);
+      }
+      for (const [point, endpoint] of [
+        [relationship.links[0]?.to, sourceCenter],
+        [relationship.links[1]?.from, targetCenter],
+      ]) {
+        if (!point || !endpoint)
+          throw new Error("Expected diamond boundary endpoint");
+        expect(
+          Math.abs(point.x - relationship.center.x) / (relationship.width / 2) +
+            Math.abs(point.y - relationship.center.y) /
+              (relationship.height / 2),
+        ).toBeCloseTo(1);
+      }
+    }
+  });
+
   test("places entities, relation, attributes, and both endpoint links", () => {
     const layout = layoutDiagram(diagram);
     expect(layout.entities).toHaveLength(2);

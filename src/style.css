@@ -299,7 +299,8 @@ code {
   padding: var(--space-6);
 }
 
-.diagram-output.is-zoomed {
+.diagram-output.is-zoomed,
+.diagram-output.is-overflowing {
   place-items: start;
 }
 

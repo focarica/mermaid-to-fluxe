@@ -116,12 +116,19 @@ const zoomStep = 0.25;
 
 function updateZoom(): void {
   const svg = currentSvg;
+  let overflowing = false;
   if (svg) {
-    svg.style.width = `${zoom * 100}%`;
+    const naturalWidth = Number(svg.getAttribute("width"));
+    const naturalHeight = Number(svg.getAttribute("height"));
+    svg.style.width = `${naturalWidth * zoom}px`;
     svg.style.height = "";
     svg.style.transform = "";
+    overflowing =
+      naturalWidth * zoom > outputRegion.clientWidth - 48 ||
+      naturalHeight * zoom > outputRegion.clientHeight - 48;
   }
   outputRegion.classList.toggle("is-zoomed", zoom > 1);
+  outputRegion.classList.toggle("is-overflowing", overflowing);
   zoomReadout.value = `${Math.round(zoom * 100)}%`;
   zoomReadout.textContent = zoomReadout.value;
   const diagramAvailable = svg !== undefined;

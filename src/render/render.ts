@@ -14,6 +14,16 @@ const cardinalityText: Readonly<Record<string, string>> = {
 };
 
 export function describeDiagram(diagram: Diagram): string {
+  const weakEntities = new Set(
+    diagram.entities
+      .filter((entity) =>
+        entity.attributes.some(
+          (attribute) =>
+            attribute.keys.includes("PK") && attribute.keys.includes("FK"),
+        ),
+      )
+      .map((entity) => entity.name),
+  );
   const entityDescriptions = diagram.entities.map((entity) => {
     const attributes = entity.attributes.map((attribute) => {
       const type = attribute.type ? `, type ${attribute.type}` : "";
@@ -27,7 +37,7 @@ export function describeDiagram(diagram: Diagram): string {
   });
   const relationshipDescriptions = diagram.relationships.map(
     (relationship) =>
-      `${relationship.from} (${cardinalityText[relationship.fromCardinality] ?? relationship.fromCardinality}) ${relationship.identifying ? "identifying" : "non-identifying"} relationship “${relationship.label}” to ${relationship.to} (${cardinalityText[relationship.toCardinality] ?? relationship.toCardinality})`,
+      `${relationship.from} (${cardinalityText[relationship.fromCardinality] ?? relationship.fromCardinality}) ${relationship.identifying && (weakEntities.has(relationship.from) || weakEntities.has(relationship.to)) ? "identifying" : "non-identifying"} relationship “${relationship.label}” to ${relationship.to} (${cardinalityText[relationship.toCardinality] ?? relationship.toCardinality})`,
   );
   return `Entities: ${entityDescriptions.join(". ") || "none"}. Relationships: ${relationshipDescriptions.join(". ") || "none"}.`;
 }
@@ -45,7 +55,7 @@ export function renderDiagram(
   );
   svg.setAttribute("width", String(layout.bounds.width));
   svg.setAttribute("height", String(layout.bounds.height));
-  svg.style.width = "100%";
+  svg.style.width = `${layout.bounds.width}px`;
   svg.style.backgroundColor = paper;
   svg.setAttribute("role", "img");
   const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
@@ -109,6 +119,25 @@ export function renderDiagram(
     line.setAttribute("stroke-linecap", "round");
     return line;
   };
+  const addParallelConnector = (
+    from: Point,
+    to: Point,
+    strokeWidth: number,
+    separation: number,
+  ): SVGLineElement => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const offset = {
+      x: (-dy / length) * separation,
+      y: (dx / length) * separation,
+    };
+    return addConnector(
+      { x: from.x + offset.x, y: from.y + offset.y },
+      { x: to.x + offset.x, y: to.y + offset.y },
+      strokeWidth,
+    );
+  };
   layout.attributes.forEach((attribute) => {
     const centerX = attribute.x + attribute.width / 2;
     const centerY = attribute.y + attribute.height / 2;
@@ -141,9 +170,11 @@ export function renderDiagram(
         cardinalityText[link.cardinality] ?? link.cardinality,
         (link.from.x + link.to.x) / 2,
         (link.from.y + link.to.y) / 2 - 12,
-        13,
+        16,
         muted,
       );
+      if (link.doubleLine)
+        group.append(addParallelConnector(link.from, link.to, 1.8, 3.5));
       cardinality.setAttribute("stroke", paper);
       cardinality.setAttribute("stroke-width", "4");
       cardinality.setAttribute("paint-order", "stroke");
@@ -207,6 +238,23 @@ export function renderDiagram(
         fillStyle: "solid",
       }),
     );
+    if (entity.weak) {
+      group.append(
+        roughSvg.rectangle(
+          entity.x + 6,
+          entity.y + 6,
+          entity.width - 12,
+          entity.height - 12,
+          {
+            seed: 60 + index,
+            stroke: ink,
+            strokeWidth: 1.5,
+            fill: paper,
+            fillStyle: "solid",
+          },
+        ),
+      );
+    }
     group.append(
       addLabel(
         entity.name,
@@ -244,25 +292,47 @@ export function renderDiagram(
           strokeWidth: 1.8,
           fill: paper,
           fillStyle: "solid",
+          ...(attribute.partialKey ? { strokeLineDash: [5, 4] } : {}),
         },
       ),
     );
+    if (attribute.multivalued) {
+      field.append(
+        roughSvg.ellipse(
+          centerX,
+          centerY,
+          attribute.width - 12,
+          attribute.height - 12,
+          {
+            seed: 450 + index,
+            stroke: ink,
+            strokeWidth: 1.5,
+            fill: paper,
+            fillStyle: "solid",
+            ...(attribute.partialKey ? { strokeLineDash: [5, 4] } : {}),
+          },
+        ),
+      );
+    }
     const nameWidth = attribute.name.length * 7.4;
     const keyText = attribute.keys.join("/");
     const fullText = keyText ? `${attribute.name}  ${keyText}` : attribute.name;
     const nameCenterX = keyText ? centerX - keyText.length * 3.7 : centerX;
     if (attribute.keys.includes("PK")) {
-      const baselineY = attribute.y + attribute.height / 2 + 5;
+      const labelY = attribute.type ? centerY - 9 : centerY;
+      const underlineY = labelY + 8;
       const underline = document.createElementNS(
         "http://www.w3.org/2000/svg",
         "line",
       );
       underline.setAttribute("x1", String(nameCenterX - nameWidth / 2));
       underline.setAttribute("x2", String(nameCenterX + nameWidth / 2));
-      underline.setAttribute("y1", String(baselineY + 2));
-      underline.setAttribute("y2", String(baselineY + 2));
+      underline.setAttribute("y1", String(underlineY));
+      underline.setAttribute("y2", String(underlineY));
       underline.setAttribute("stroke", ink);
       underline.setAttribute("stroke-width", "1");
+      if (attribute.partialKey)
+        underline.setAttribute("stroke-dasharray", "4 2");
       field.append(underline);
     }
     field.append(

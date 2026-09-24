@@ -7,11 +7,16 @@ export type Box = {
   readonly width: number;
   readonly height: number;
 };
-export type EntityShape = Box & { readonly name: string };
+export type EntityShape = Box & {
+  readonly name: string;
+  readonly weak: boolean;
+};
 export type AttributeShape = Box & {
   readonly entity: string;
   readonly name: string;
   readonly keys: readonly ("PK" | "FK" | "UK")[];
+  readonly multivalued: boolean;
+  readonly partialKey: boolean;
   readonly type?: string;
   readonly comment?: string;
   readonly anchor: Point;
@@ -26,6 +31,7 @@ export type RelationshipShape = {
     readonly from: Point;
     readonly to: Point;
     readonly cardinality: string;
+    readonly doubleLine: boolean;
   }[];
 };
 export type DiagramLayout = {
@@ -68,6 +74,16 @@ export function layoutDiagram(
     diagram.relationships
       .filter((relationship) => relationship.from === relationship.to)
       .map((relationship) => relationship.from),
+  );
+  const weakEntities = new Set(
+    diagram.entities
+      .filter((entity) =>
+        entity.attributes.some(
+          (attribute) =>
+            attribute.keys.includes("PK") && attribute.keys.includes("FK"),
+        ),
+      )
+      .map((entity) => entity.name),
   );
   const orbitRadii = diagram.entities.map((entity, index) => {
     const count = entity.attributes.length;
@@ -115,20 +131,6 @@ export function layoutDiagram(
           : 0;
     return Math.max(entityClearance, attributeClearance, directionClearance);
   });
-  const groupExtent = Math.max(
-    ...entityRadii,
-    ...orbitRadii.map(
-      (radius, index) => radius + (attributeRadii[index] ?? 0) + clearance + 12,
-    ),
-  );
-  const widestRelationship = Math.max(
-    112,
-    ...diagram.relationships.map(
-      (relationship) => relationship.label.length * 9 + 42,
-    ),
-  );
-  const entityGap = groupExtent * 2 + widestRelationship + 48;
-  const verticalGap = groupExtent * 2 + 56 + clearance;
   const adjacency = new Map(
     diagram.entities.map((entity) => [entity.name, new Set<string>()]),
   );
@@ -136,18 +138,38 @@ export function layoutDiagram(
     adjacency.get(relationship.from)?.add(relationship.to);
     adjacency.get(relationship.to)?.add(relationship.from);
   }
-  const positions = new Map<
-    string,
-    { readonly column: number; readonly row: number }
-  >();
-  const entityOrder = new Map(
-    diagram.entities.map((entity, index) => [entity.name, index]),
+  const relationshipDegree = new Map(
+    diagram.entities.map((entity) => [entity.name, 0]),
   );
-  let componentOffset = 0;
+  for (const relationship of diagram.relationships) {
+    relationshipDegree.set(
+      relationship.from,
+      (relationshipDegree.get(relationship.from) ?? 0) + 1,
+    );
+    relationshipDegree.set(
+      relationship.to,
+      (relationshipDegree.get(relationship.to) ?? 0) + 1,
+    );
+  }
+  const cloudExtents = new Map(
+    diagram.entities.map((entity, index) => [
+      entity.name,
+      Math.max(
+        entityRadii[index] ?? 0,
+        (orbitRadii[index] ?? 0) +
+          (attributeRadii[index] ?? 0) +
+          clearance +
+          12,
+      ),
+    ]),
+  );
+  const positions = new Map<string, Point>();
+  const positioned = new Set<string>();
+  let componentOffset = padding;
   for (const entity of [...diagram.entities].sort((left, right) =>
     left.name.localeCompare(right.name),
   )) {
-    if (positions.has(entity.name)) continue;
+    if (positioned.has(entity.name)) continue;
     const component = new Set<string>();
     const pending = [entity.name];
     while (pending.length > 0) {
@@ -158,78 +180,203 @@ export function layoutDiagram(
     }
     const root = [...component].sort((left, right) => {
       const degreeDifference =
-        (adjacency.get(right)?.size ?? 0) - (adjacency.get(left)?.size ?? 0);
-      return (
-        degreeDifference ||
-        left.localeCompare(right) ||
-        (entityOrder.get(left) ?? 0) - (entityOrder.get(right) ?? 0)
-      );
+        (relationshipDegree.get(right) ?? 0) -
+        (relationshipDegree.get(left) ?? 0);
+      return degreeDifference || left.localeCompare(right);
     })[0];
     if (!root) continue;
-    const levels = new Map<string, number>([[root, 0]]);
-    const queue = [root];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current) continue;
-      const nextLevel = (levels.get(current) ?? 0) + 1;
-      for (const neighbor of adjacency.get(current) ?? []) {
-        if (!component.has(neighbor) || levels.has(neighbor)) continue;
-        levels.set(neighbor, nextLevel);
-        queue.push(neighbor);
+    const members = [...component].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const leaves = members.filter(
+      (name) => name !== root && (relationshipDegree.get(name) ?? 0) <= 1,
+    );
+    const core = members.filter(
+      (name) => name !== root && (relationshipDegree.get(name) ?? 0) > 1,
+    );
+    const localPositions = new Map<string, { x: number; y: number }>([
+      [root, { x: 0, y: 0 }],
+    ]);
+    const placeOnRing = (names: string[], ringOffset: number): void => {
+      if (names.length === 0) return;
+      const maxExtent = Math.max(
+        ...names.map((name) => cloudExtents.get(name) ?? 0),
+      );
+      const radius =
+        (cloudExtents.get(root) ?? 0) + maxExtent + ringOffset + 112;
+      names.forEach((name, index) => {
+        const angle = -Math.PI / 2 + (index * Math.PI * 2) / names.length;
+        localPositions.set(name, {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        });
+      });
+    };
+    placeOnRing(core, 64);
+    placeOnRing(leaves, 176);
+    const initialPositions = new Map(
+      [...localPositions].map(([name, point]) => [name, { ...point }]),
+    );
+    const links = diagram.relationships.filter(
+      (relationship) =>
+        component.has(relationship.from) && component.has(relationship.to),
+    );
+    const forces = new Map<string, { x: number; y: number }>();
+    const iterations = 180;
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      forces.clear();
+      for (const name of members) forces.set(name, { x: 0, y: 0 });
+      for (let leftIndex = 0; leftIndex < members.length; leftIndex += 1) {
+        const leftName = members[leftIndex];
+        const left = leftName ? localPositions.get(leftName) : undefined;
+        if (!leftName || !left) continue;
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < members.length;
+          rightIndex += 1
+        ) {
+          const rightName = members[rightIndex];
+          const right = rightName ? localPositions.get(rightName) : undefined;
+          if (!rightName || !right) continue;
+          let dx = right.x - left.x;
+          let dy = right.y - left.y;
+          let distance = Math.hypot(dx, dy);
+          if (distance < 0.01) {
+            dx = leftIndex + 1;
+            dy = rightIndex + 1;
+            distance = Math.hypot(dx, dy);
+          }
+          const minDistance =
+            (cloudExtents.get(leftName) ?? 0) +
+            (cloudExtents.get(rightName) ?? 0) +
+            32;
+          const repulsion =
+            (minDistance * minDistance * 0.035) / (distance * distance) +
+            Math.max(0, minDistance - distance) * 0.12;
+          const leftForce = forces.get(leftName);
+          const rightForce = forces.get(rightName);
+          if (!leftForce || !rightForce) continue;
+          leftForce.x -= (dx / distance) * repulsion;
+          leftForce.y -= (dy / distance) * repulsion;
+          rightForce.x += (dx / distance) * repulsion;
+          rightForce.y += (dy / distance) * repulsion;
+        }
       }
-    }
-    const maximumLevel = Math.max(0, ...levels.values());
-    const rows = new Map<string, number>([[root, 0]]);
-    for (let level = 1; level <= maximumLevel; level += 1) {
-      const layer = [...component].filter((name) => levels.get(name) === level);
-      const parentRow = (name: string): number => {
-        const parents = [...(adjacency.get(name) ?? [])].filter(
-          (parent) => levels.get(parent) === level - 1,
+      for (const relationship of links) {
+        if (relationship.from === relationship.to) continue;
+        const from = localPositions.get(relationship.from);
+        const to = localPositions.get(relationship.to);
+        const fromForce = forces.get(relationship.from);
+        const toForce = forces.get(relationship.to);
+        if (!from || !to || !fromForce || !toForce) continue;
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        const targetDistance =
+          (cloudExtents.get(relationship.from) ?? 0) +
+          (cloudExtents.get(relationship.to) ?? 0) +
+          Math.max(112, relationship.label.length * 9 + 42) +
+          48;
+        const spring = Math.max(
+          -18,
+          Math.min(18, (distance - targetDistance) * 0.018),
         );
-        return parents.length === 0
-          ? 0
-          : parents.reduce((sum, parent) => sum + (rows.get(parent) ?? 0), 0) /
-              parents.length;
-      };
-      layer.sort(
-        (left, right) =>
-          parentRow(left) - parentRow(right) ||
-          (entityOrder.get(left) ?? 0) - (entityOrder.get(right) ?? 0) ||
-          left.localeCompare(right),
-      );
-      const parentCenter =
-        layer.reduce((sum, name) => sum + parentRow(name), 0) / layer.length;
-      const rowValues = layer.map(
-        (name, index) => parentRow(name) + index - (layer.length - 1) / 2,
-      );
-      for (let index = 1; index < rowValues.length; index += 1) {
-        const previous = rowValues[index - 1] ?? 0;
-        const current = rowValues[index] ?? previous + 1;
-        rowValues[index] = Math.max(current, previous + 1);
+        fromForce.x += (dx / distance) * spring;
+        fromForce.y += (dy / distance) * spring;
+        toForce.x -= (dx / distance) * spring;
+        toForce.y -= (dy / distance) * spring;
+        for (const name of members) {
+          if (name === relationship.from || name === relationship.to) continue;
+          const obstacle = localPositions.get(name);
+          const obstacleForce = forces.get(name);
+          if (!obstacle || !obstacleForce) continue;
+          const projection = Math.max(
+            0,
+            Math.min(
+              1,
+              ((obstacle.x - from.x) * dx + (obstacle.y - from.y) * dy) /
+                (distance * distance),
+            ),
+          );
+          const nearest = {
+            x: from.x + dx * projection,
+            y: from.y + dy * projection,
+          };
+          const awayX = obstacle.x - nearest.x;
+          const awayY = obstacle.y - nearest.y;
+          const clearanceDistance =
+            (cloudExtents.get(name) ?? 0) +
+            Math.max(112, relationship.label.length * 9 + 42) / 2 +
+            24;
+          const obstacleDistance = Math.hypot(awayX, awayY);
+          if (obstacleDistance >= clearanceDistance) continue;
+          const direction =
+            obstacleDistance > 0.01
+              ? { x: awayX / obstacleDistance, y: awayY / obstacleDistance }
+              : { x: 0, y: 1 };
+          const avoidance = (clearanceDistance - obstacleDistance) * 0.06;
+          obstacleForce.x += direction.x * avoidance;
+          obstacleForce.y += direction.y * avoidance;
+          if (name === root) {
+            fromForce.x -= direction.x * avoidance * 0.5;
+            fromForce.y -= direction.y * avoidance * 0.5;
+            toForce.x -= direction.x * avoidance * 0.5;
+            toForce.y -= direction.y * avoidance * 0.5;
+          }
+        }
       }
-      const rowCenter =
-        rowValues.reduce((sum, row) => sum + row, 0) / rowValues.length;
-      layer.forEach((name, row) => {
-        rows.set(name, (rowValues[row] ?? row) + parentCenter - rowCenter);
-      });
+      const cooling = 1 - (iteration / iterations) * 0.65;
+      for (const name of members) {
+        if (name === root) continue;
+        const position = localPositions.get(name);
+        const initial = initialPositions.get(name);
+        const force = forces.get(name);
+        if (!position || !initial || !force) continue;
+        force.x += (initial.x - position.x) * 0.0015 - position.x * 0.0007;
+        force.y += (initial.y - position.y) * 0.0015 - position.y * 0.0007;
+        const magnitude = Math.hypot(force.x, force.y) || 1;
+        const step = Math.min(24, magnitude) * cooling;
+        localPositions.set(name, {
+          x: position.x + (force.x / magnitude) * step,
+          y: position.y + (force.y / magnitude) * step,
+        });
+      }
     }
-    for (const name of component) {
+    const halfWidth = Math.max(
+      ...members.map(
+        (name) =>
+          Math.abs(localPositions.get(name)?.x ?? 0) +
+          (cloudExtents.get(name) ?? 0),
+      ),
+    );
+    const halfHeight = Math.max(
+      ...members.map(
+        (name) =>
+          Math.abs(localPositions.get(name)?.y ?? 0) +
+          (cloudExtents.get(name) ?? 0),
+      ),
+    );
+    for (const name of members) {
+      const position = localPositions.get(name);
+      if (!position) continue;
       positions.set(name, {
-        column: componentOffset + (levels.get(name) ?? 0),
-        row: rows.get(name) ?? 0,
+        x: componentOffset + halfWidth + position.x,
+        y: padding + halfHeight + position.y,
       });
+      positioned.add(name);
     }
-    componentOffset += maximumLevel + 1;
+    componentOffset += halfWidth * 2 + 112;
   }
   const entities = diagram.entities.map((entity, index) => ({
     name: entity.name,
+    weak: weakEntities.has(entity.name),
     x:
-      padding +
-      (positions.get(entity.name)?.column ?? index) * entityGap +
+      (positions.get(entity.name)?.x ?? padding + index * 200) -
+      (entityWidths[index] ?? 144) / 2 +
       (positionOffsets.get(entity.name)?.x ?? 0),
     y:
-      padding +
-      (positions.get(entity.name)?.row ?? 0) * verticalGap +
+      (positions.get(entity.name)?.y ?? padding) -
+      entityHeight / 2 +
       (positionOffsets.get(entity.name)?.y ?? 0),
     width: entityWidths[index] ?? 144,
     height: entityHeight,
@@ -241,6 +388,7 @@ export function layoutDiagram(
       y: padding,
       width: 144,
       height: entityHeight,
+      weak: false,
     };
   const attributes: AttributeShape[] = [];
   for (const [entityIndex, entity] of diagram.entities.entries()) {
@@ -286,6 +434,11 @@ export function layoutDiagram(
         entity: entity.name,
         name: attribute.name,
         keys: attribute.keys,
+        multivalued: attribute.type?.endsWith("[]") ?? false,
+        partialKey:
+          weakEntities.has(entity.name) &&
+          attribute.keys.includes("PK") &&
+          !attribute.keys.includes("FK"),
         ...(attribute.type === undefined ? {} : { type: attribute.type }),
         ...(attribute.comment === undefined
           ? {}
@@ -357,6 +510,9 @@ export function layoutDiagram(
               y: center.y + height / 4,
             },
             cardinality: relationship.fromCardinality,
+            doubleLine:
+              relationship.toCardinality === "one" ||
+              relationship.toCardinality === "one-or-more",
           },
           {
             from: {
@@ -368,6 +524,9 @@ export function layoutDiagram(
               y: to.y - toEntity.height / 2,
             },
             cardinality: relationship.toCardinality,
+            doubleLine:
+              relationship.fromCardinality === "one" ||
+              relationship.fromCardinality === "one-or-more",
           },
         ]
       : [
@@ -375,16 +534,25 @@ export function layoutDiagram(
             from: boundaryPoint(from, center, fromEntity),
             to: diamondPoint(from),
             cardinality: relationship.fromCardinality,
+            doubleLine:
+              relationship.toCardinality === "one" ||
+              relationship.toCardinality === "one-or-more",
           },
           {
             from: diamondPoint(to),
             to: boundaryPoint(to, center, toEntity),
             cardinality: relationship.toCardinality,
+            doubleLine:
+              relationship.fromCardinality === "one" ||
+              relationship.fromCardinality === "one-or-more",
           },
         ];
     return {
       label: relationship.label,
-      identifying: relationship.identifying,
+      identifying:
+        relationship.identifying &&
+        (weakEntities.has(relationship.from) ||
+          weakEntities.has(relationship.to)),
       center,
       width,
       height,

@@ -108,6 +108,29 @@ erDiagram %% declaration
     expect(result.entities).toEqual([{ name: "Named Entity", attributes: [] }]);
   });
 
+  test("parses derived, composite, and relationship-owned Chen attributes", () => {
+    const result = parseErDiagram(`erDiagram
+PERSON { date birth_date; int age DERIVED; string address COMPOSITE(street, city) }
+PERSON ||--o{ JOB : holds
+RELATIONSHIP holds {
+  date started_at
+}`);
+
+    expect(result.entities[0]?.attributes).toEqual([
+      { name: "birth_date", type: "date", keys: [] },
+      { name: "age", type: "int", keys: [], derived: true },
+      {
+        name: "address",
+        type: "string",
+        keys: [],
+        components: ["street", "city"],
+      },
+    ]);
+    expect(result.relationships[0]?.attributes).toEqual([
+      { name: "started_at", type: "date", keys: [] },
+    ]);
+  });
+
   test.each([
     ["", 1, "Expected erDiagram"],
     ["%% first\nflowchart TD", 2, "Expected erDiagram"],

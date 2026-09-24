@@ -23,8 +23,13 @@ const relationPattern = new RegExp(
   `^(${nameToken})\\s+(\\|\\||o\\||\\|o|\\|\\{|\\}\\||o\\{|\\}o)(--|\\.\\.)(\\|\\||o\\||\\|o|\\|\\{|\\}\\||o\\{|\\}o)\\s+(${nameToken})\\s*:\\s*(.+)$`,
 );
 const blockPattern = new RegExp(`^(${nameToken})\\s*\\{(.*)$`);
+const relationshipBlockPattern = new RegExp(
+  `^RELATIONSHIP\\s+(${nameToken})\\s*\\{(.*)$`,
+  "i",
+);
+const attributeFlags = String.raw`(?:PK|FK|UK|DERIVED|COMPOSITE(?:\([^)]*\))?)`;
 const attributePattern = new RegExp(
-  `^(?:([\\w]+(?:\\([^()\\s]+\\))?(?:\\[\\])*)\\s+)?(${nameToken})(?:\\s+((?:PK|FK|UK)(?:\\s*,\\s*(?:PK|FK|UK))*))?(?:\\s+(${quotedToken}))?$`,
+  `^(?:([\\w]+(?:\\([^()\\s]+\\))?(?:\\[\\])*)\\s+)?(${nameToken})(?:\\s+(${attributeFlags}(?:\\s*,\\s*${attributeFlags})*))?(?:\\s+(${quotedToken}))?$`,
 );
 
 function unquote(value: string): string {
@@ -61,24 +66,55 @@ function parseAttribute(text: string, line: number): Attribute {
     throw new ErParseError(line, `Malformed attribute: ${text}`);
   }
   const keys: ("PK" | "FK" | "UK")[] = [];
-  for (const key of flags?.split(/\s*,\s*/) ?? []) {
-    switch (key) {
+  let derived = false;
+  let components: string[] | undefined;
+  const parsedFlags =
+    flags?.match(/COMPOSITE(?:\([^)]*\))|DERIVED|PK|FK|UK/g) ?? [];
+  for (const flag of parsedFlags) {
+    switch (flag) {
       case "PK":
       case "FK":
       case "UK":
-        if (keys.includes(key)) {
-          throw new ErParseError(line, `Duplicate key flag: ${key}`);
+        if (keys.includes(flag)) {
+          throw new ErParseError(line, `Duplicate key flag: ${flag}`);
         }
-        keys.push(key);
+        keys.push(flag);
+        break;
+      case "DERIVED":
+        if (derived) {
+          throw new ErParseError(line, "Duplicate attribute marker: DERIVED");
+        }
+        derived = true;
         break;
       default:
-        throw new ErParseError(line, `Unsupported key flag: ${key}`);
+        if (flag.startsWith("COMPOSITE")) {
+          const list = flag.match(/^COMPOSITE\((.*)\)$/)?.[1];
+          if (list === undefined || components !== undefined) {
+            throw new ErParseError(
+              line,
+              list === undefined
+                ? "Composite attributes need named components"
+                : "Duplicate attribute marker: COMPOSITE",
+            );
+          }
+          components = list.split(",").map((part) => unquote(part.trim()));
+          if (components.length === 0 || components.some((part) => !part)) {
+            throw new ErParseError(
+              line,
+              "Composite attributes need components",
+            );
+          }
+        } else {
+          throw new ErParseError(line, `Unsupported attribute marker: ${flag}`);
+        }
     }
   }
   return {
     name: unquote(name),
     ...(type === undefined ? {} : { type }),
     keys,
+    ...(derived ? { derived: true } : {}),
+    ...(components === undefined ? {} : { components }),
     ...(comment === undefined ? {} : { comment: unquote(comment) }),
   };
 }
@@ -127,7 +163,14 @@ export function parseErDiagram(source: string): Diagram {
   const declared = new Set<string>();
   const relationships: Relationship[] = [];
   let started = false;
-  let block: { readonly name: string; readonly line: number } | undefined;
+  let block:
+    | { readonly kind: "entity"; readonly name: string; readonly line: number }
+    | {
+        readonly kind: "relationship";
+        readonly index: number;
+        readonly line: number;
+      }
+    | undefined;
 
   const lines = source.split(/\r\n|\n|\r/);
   for (const [index, raw] of lines.entries()) {
@@ -141,6 +184,30 @@ export function parseErDiagram(source: string): Diagram {
       }
       started = true;
       continue;
+    }
+
+    const relationshipOpen = block ? null : relationshipBlockPattern.exec(text);
+    if (relationshipOpen) {
+      const rawLabel = relationshipOpen[1];
+      const rest = relationshipOpen[2];
+      if (rawLabel === undefined || rest === undefined) {
+        throw new ErParseError(line, "Malformed relationship attribute block");
+      }
+      const label = unquote(rawLabel);
+      const matching = relationships
+        .map((relationship, index) => ({ relationship, index }))
+        .filter(({ relationship }) => relationship.label === label);
+      if (matching.length !== 1) {
+        throw new ErParseError(
+          line,
+          matching.length === 0
+            ? `Unknown relationship label: ${label}`
+            : `Ambiguous relationship label: ${label}`,
+        );
+      }
+      block = { kind: "relationship", index: matching[0]?.index ?? 0, line };
+      text = rest.trim();
+      if (!text) continue;
     }
 
     const open = block ? null : blockPattern.exec(text);
@@ -158,7 +225,7 @@ export function parseErDiagram(source: string): Diagram {
       }
       declared.add(name);
       if (!entities.has(name)) entities.set(name, { name, attributes: [] });
-      block = { name, line };
+      block = { kind: "entity", name, line };
       text = rest.trim();
       if (!text) continue;
     }
@@ -169,15 +236,28 @@ export function parseErDiagram(source: string): Diagram {
         throw new ErParseError(line, "Unexpected content after entity block");
       }
       const content = close >= 0 ? text.slice(0, close) : text;
-      const entity = entities.get(block.name);
-      if (entity === undefined) {
-        throw new ErParseError(block.line, `Missing entity: ${block.name}`);
+      const attributes = attributeSegments(content, line).map((segment) =>
+        parseAttribute(segment, line),
+      );
+      if (block.kind === "entity") {
+        const entity = entities.get(block.name);
+        if (entity === undefined) {
+          throw new ErParseError(block.line, `Missing entity: ${block.name}`);
+        }
+        entities.set(block.name, {
+          name: block.name,
+          attributes: [...entity.attributes, ...attributes],
+        });
+      } else {
+        const relationship = relationships[block.index];
+        if (!relationship) {
+          throw new ErParseError(block.line, "Missing relationship");
+        }
+        relationships[block.index] = {
+          ...relationship,
+          attributes: [...(relationship.attributes ?? []), ...attributes],
+        };
       }
-      const attributes = [...entity.attributes];
-      for (const segment of attributeSegments(content, line)) {
-        attributes.push(parseAttribute(segment, line));
-      }
-      entities.set(block.name, { name: block.name, attributes });
       if (close >= 0) block = undefined;
       continue;
     }
@@ -242,6 +322,11 @@ export function parseErDiagram(source: string): Diagram {
   }
   if (!started) throw new ErParseError(1, "Expected erDiagram declaration");
   if (block)
-    throw new ErParseError(block.line, `Missing } for entity ${block.name}`);
+    throw new ErParseError(
+      block.line,
+      block.kind === "entity"
+        ? `Missing } for entity ${block.name}`
+        : "Missing } for relationship attributes",
+    );
   return { entities: [...entities.values()], relationships };
 }

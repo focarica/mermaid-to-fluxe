@@ -30,14 +30,19 @@ export function describeDiagram(diagram: Diagram): string {
       const keys = attribute.keys.length
         ? `, ${attribute.keys.join(", ")}`
         : "";
+      const form = attribute.derived
+        ? ", derived"
+        : attribute.components?.length
+          ? `, composite of ${attribute.components.join(", ")}`
+          : "";
       const comment = attribute.comment ? `, comment ${attribute.comment}` : "";
-      return `${attribute.name}${type}${keys}${comment}`;
+      return `${attribute.name}${type}${keys}${form}${comment}`;
     });
     return `${entity.name}: ${attributes.join("; ") || "no attributes"}`;
   });
   const relationshipDescriptions = diagram.relationships.map(
     (relationship) =>
-      `${relationship.from} (${cardinalityText[relationship.fromCardinality] ?? relationship.fromCardinality}) ${relationship.identifying && (weakEntities.has(relationship.from) || weakEntities.has(relationship.to)) ? "identifying" : "non-identifying"} relationship “${relationship.label}” to ${relationship.to} (${cardinalityText[relationship.toCardinality] ?? relationship.toCardinality})`,
+      `${relationship.from} (${cardinalityText[relationship.fromCardinality] ?? relationship.fromCardinality}) ${relationship.identifying && (weakEntities.has(relationship.from) || weakEntities.has(relationship.to)) ? "identifying" : "non-identifying"} relationship “${relationship.label}”${relationship.attributes?.length ? ` with attributes ${relationship.attributes.map(({ name }) => name).join(", ")}` : ""} to ${relationship.to} (${cardinalityText[relationship.toCardinality] ?? relationship.toCardinality})`,
   );
   return `Entities: ${entityDescriptions.join(". ") || "none"}. Relationships: ${relationshipDescriptions.join(". ") || "none"}.`;
 }
@@ -151,11 +156,15 @@ export function renderDiagram(
       x: centerX + (attribute.anchor.x - centerX) * ellipseScale,
       y: centerY + (attribute.anchor.y - centerY) * ellipseScale,
     };
-    svg.append(addConnector(attribute.anchor, ellipseBoundary, 1.5));
+    const connector = addConnector(attribute.anchor, ellipseBoundary, 1.5);
+    connector.setAttribute("class", "attribute-connector");
+    connector.setAttribute("data-attribute-owner", attribute.entity);
+    svg.append(connector);
   });
   layout.relationships.forEach((relationship, index) => {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.setAttribute("data-position-key", `relationship:${index}`);
+    group.setAttribute("data-relationship-index", String(index));
     group.setAttribute("tabindex", "0");
     group.setAttribute("role", "group");
     group.setAttribute(
@@ -265,16 +274,14 @@ export function renderDiagram(
   });
   layout.attributes.forEach((attribute, index) => {
     const field = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    field.setAttribute(
-      "data-position-key",
-      `attribute:${attribute.entity}:${attribute.name}`,
-    );
+    field.setAttribute("data-position-key", attribute.positionKey);
     field.setAttribute("data-attribute", attribute.name);
+    field.setAttribute("data-attribute-owner", attribute.entity);
     field.setAttribute("tabindex", "0");
     field.setAttribute("role", "group");
     field.setAttribute(
       "aria-label",
-      `${attribute.name} attribute; drag or use arrow keys to move`,
+      `${attribute.name} ${attribute.entity.startsWith("relationship:") ? "relationship attribute" : attribute.parent ? "component attribute" : "attribute"}; drag or use arrow keys to move`,
     );
     field.style.cursor = "grab";
     svg.append(field);
@@ -292,7 +299,9 @@ export function renderDiagram(
           strokeWidth: 1.8,
           fill: paper,
           fillStyle: "solid",
-          ...(attribute.partialKey ? { strokeLineDash: [5, 4] } : {}),
+          ...(attribute.partialKey || attribute.derived
+            ? { strokeLineDash: [5, 4] }
+            : {}),
         },
       ),
     );
@@ -309,7 +318,9 @@ export function renderDiagram(
             strokeWidth: 1.5,
             fill: paper,
             fillStyle: "solid",
-            ...(attribute.partialKey ? { strokeLineDash: [5, 4] } : {}),
+            ...(attribute.partialKey || attribute.derived
+              ? { strokeLineDash: [5, 4] }
+              : {}),
           },
         ),
       );

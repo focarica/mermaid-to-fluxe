@@ -364,6 +364,56 @@ describe("layoutDiagram", () => {
     expect(partialKey?.partialKey).toBe(true);
   });
 
+  test("places composite parts and relationship attributes as separate Chen ovals", () => {
+    const diagram = {
+      entities: [
+        {
+          name: "PERSON",
+          attributes: [
+            { name: "age", type: "int", keys: [], derived: true },
+            {
+              name: "address",
+              type: "string",
+              keys: [],
+              components: ["street", "city"],
+            },
+          ],
+        },
+        { name: "JOB", attributes: [] },
+      ],
+      relationships: [
+        {
+          from: "PERSON",
+          to: "JOB",
+          fromCardinality: "one",
+          toCardinality: "zero-or-more",
+          identifying: false,
+          label: "holds",
+          attributes: [{ name: "started_at", type: "date", keys: [] }],
+        },
+      ],
+    };
+
+    const layout = layoutDiagram(diagram);
+
+    expect(layout.attributes.map(({ name }) => name)).toEqual([
+      "age",
+      "address",
+      "street",
+      "city",
+      "started_at",
+    ]);
+    expect(layout.attributes.find(({ name }) => name === "age")?.derived).toBe(
+      true,
+    );
+    expect(
+      layout.attributes.find(({ name }) => name === "street")?.parent,
+    ).toBe("address");
+    expect(
+      layout.attributes.find(({ name }) => name === "started_at")?.entity,
+    ).toBe("relationship:0");
+  });
+
   test("keeps force placement deterministic for complex hub components", () => {
     const crowded = {
       entities: [

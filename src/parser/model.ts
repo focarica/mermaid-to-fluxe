@@ -8,6 +8,8 @@ export type Attribute = {
   readonly name: string;
   readonly type?: string;
   readonly keys: readonly ("PK" | "FK" | "UK")[];
+  readonly derived?: boolean;
+  readonly components?: readonly string[];
   readonly comment?: string;
 };
 
@@ -23,6 +25,7 @@ export type Relationship = {
   readonly toCardinality: Cardinality;
   readonly identifying: boolean;
   readonly label: string;
+  readonly attributes?: readonly Attribute[];
 };
 
 export type Diagram = {

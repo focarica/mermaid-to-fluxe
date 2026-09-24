@@ -14,9 +14,13 @@ export type EntityShape = Box & {
 export type AttributeShape = Box & {
   readonly entity: string;
   readonly name: string;
+  readonly positionKey: string;
+  readonly parent?: string;
   readonly keys: readonly ("PK" | "FK" | "UK")[];
   readonly multivalued: boolean;
   readonly partialKey: boolean;
+  readonly derived: boolean;
+  readonly composite: boolean;
   readonly type?: string;
   readonly comment?: string;
   readonly anchor: Point;
@@ -60,6 +64,7 @@ export function layoutDiagram(
         return Math.max(
           (attribute.name.length + keyLabel.length) * 9 + 36,
           (attribute.type?.length ?? 0) * 7 + 24,
+          ...(attribute.components ?? []).map((name) => name.length * 9 + 36),
         );
       }),
     ),
@@ -86,7 +91,10 @@ export function layoutDiagram(
       .map((entity) => entity.name),
   );
   const orbitRadii = diagram.entities.map((entity, index) => {
-    const count = entity.attributes.length;
+    const count = entity.attributes.reduce(
+      (total, attribute) => total + 1 + (attribute.components?.length ?? 0),
+      0,
+    );
     if (count === 0) return 0;
     const attributeRadius = attributeRadii[index] ?? 0;
     const entityRadius = entityRadii[index] ?? 0;
@@ -158,6 +166,14 @@ export function layoutDiagram(
         entityRadii[index] ?? 0,
         (orbitRadii[index] ?? 0) +
           (attributeRadii[index] ?? 0) +
+          Math.max(
+            0,
+            ...entity.attributes.flatMap((attribute) =>
+              (attribute.components ?? []).map(
+                (name) => (name.length * 9 + 36) / 2 + 28,
+              ),
+            ),
+          ) +
           clearance +
           12,
       ),
@@ -433,12 +449,15 @@ export function layoutDiagram(
       attributes.push({
         entity: entity.name,
         name: attribute.name,
+        positionKey: `attribute:${entity.name}:${attribute.name}`,
         keys: attribute.keys,
         multivalued: attribute.type?.endsWith("[]") ?? false,
         partialKey:
           weakEntities.has(entity.name) &&
           attribute.keys.includes("PK") &&
           !attribute.keys.includes("FK"),
+        derived: attribute.derived ?? false,
+        composite: (attribute.components?.length ?? 0) > 0,
         ...(attribute.type === undefined ? {} : { type: attribute.type }),
         ...(attribute.comment === undefined
           ? {}
@@ -449,6 +468,61 @@ export function layoutDiagram(
         width,
         height,
       });
+      const components = attribute.components ?? [];
+      if (components.length > 0) {
+        const radialLength =
+          Math.hypot(
+            attributeCenter.x - center.x,
+            attributeCenter.y - center.y,
+          ) || 1;
+        const radial = {
+          x: (attributeCenter.x - center.x) / radialLength,
+          y: (attributeCenter.y - center.y) / radialLength,
+        };
+        const tangent = { x: -radial.y, y: radial.x };
+        components.forEach((componentName, componentIndex) => {
+          const componentWidth = Math.max(116, componentName.length * 9 + 36);
+          const spread = (componentIndex - (components.length - 1) / 2) * 42;
+          const componentCenter = {
+            x:
+              attributeCenter.x +
+              radial.x * (width / 2 + componentWidth / 2 + 28) +
+              tangent.x * spread,
+            y:
+              attributeCenter.y +
+              radial.y * (width / 2 + componentWidth / 2 + 28) +
+              tangent.y * spread,
+          };
+          const componentOffsetKey = `attribute:${entity.name}:${attribute.name}.${componentName}`;
+          const componentOffset = positionOffsets.get(componentOffsetKey);
+          const childCenter = {
+            x: componentCenter.x + (componentOffset?.x ?? 0),
+            y: componentCenter.y + (componentOffset?.y ?? 0),
+          };
+          const dx = childCenter.x - attributeCenter.x;
+          const dy = childCenter.y - attributeCenter.y;
+          const scale = 1 / Math.hypot(dx / (width / 2), dy / (height / 2));
+          attributes.push({
+            entity: entity.name,
+            name: componentName,
+            positionKey: componentOffsetKey,
+            keys: [],
+            multivalued: false,
+            partialKey: false,
+            derived: false,
+            composite: false,
+            parent: attribute.name,
+            anchor: {
+              x: attributeCenter.x + dx * scale,
+              y: attributeCenter.y + dy * scale,
+            },
+            x: childCenter.x - componentWidth / 2,
+            y: childCenter.y - 24,
+            width: componentWidth,
+            height: 48,
+          });
+        });
+      }
     });
   }
   const relationships = diagram.relationships.map((relationship) => {
@@ -558,6 +632,58 @@ export function layoutDiagram(
       height,
       links,
     };
+  });
+  relationships.forEach((relationshipShape, index) => {
+    const relationship = diagram.relationships[index];
+    for (const [attributeIndex, attribute] of (
+      relationship?.attributes ?? []
+    ).entries()) {
+      const width = Math.max(116, attribute.name.length * 9 + 36);
+      const height = attribute.type ? 64 : 48;
+      const spread =
+        (attributeIndex - ((relationship?.attributes?.length ?? 1) - 1) / 2) *
+        52;
+      const xCenter = relationshipShape.center.x + spread;
+      const yCenter =
+        relationshipShape.center.y +
+        relationshipShape.height / 2 +
+        height / 2 +
+        36;
+      const offsetKey = `relationship-attribute:${index}:${attribute.name}`;
+      const offset = positionOffsets.get(offsetKey);
+      const center = {
+        x: xCenter + (offset?.x ?? 0),
+        y: yCenter + (offset?.y ?? 0),
+      };
+      const dx = center.x - relationshipShape.center.x;
+      const dy = center.y - relationshipShape.center.y;
+      const scale =
+        1 /
+        (Math.abs(dx) / (relationshipShape.width / 2) +
+          Math.abs(dy) / (relationshipShape.height / 2));
+      attributes.push({
+        entity: `relationship:${index}`,
+        name: attribute.name,
+        positionKey: offsetKey,
+        keys: attribute.keys,
+        multivalued: attribute.type?.endsWith("[]") ?? false,
+        partialKey: false,
+        derived: attribute.derived ?? false,
+        composite: (attribute.components?.length ?? 0) > 0,
+        ...(attribute.type === undefined ? {} : { type: attribute.type }),
+        ...(attribute.comment === undefined
+          ? {}
+          : { comment: attribute.comment }),
+        anchor: {
+          x: relationshipShape.center.x + dx * scale,
+          y: relationshipShape.center.y + dy * scale,
+        },
+        x: center.x - width / 2,
+        y: center.y - height / 2,
+        width,
+        height,
+      });
+    }
   });
   const extents = [
     ...entities,

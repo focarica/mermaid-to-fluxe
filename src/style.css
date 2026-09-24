@@ -320,6 +320,20 @@ code {
   touch-action: none;
 }
 
+.diagram-output svg.is-tracing g.is-dimmed,
+.diagram-output svg.is-tracing .attribute-connector.is-dimmed {
+  opacity: 0.08;
+}
+
+.diagram-output svg.is-tracing g.is-trace-context {
+  opacity: 0.58;
+}
+
+.diagram-output svg.is-tracing g.is-trace-focus {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px rgb(166 79 54 / 42%));
+}
+
 .status {
   min-height: 1.4em;
 }
@@ -338,25 +352,30 @@ code {
 
 @media (min-width: 768px) {
   .workbench {
+    height: 100dvh;
+    min-height: 0;
     padding: var(--space-6);
   }
 
   .workspace {
-    min-height: calc(100dvh - 104px);
+    height: calc(100dvh - 108px);
+    min-height: 0;
     grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
   }
 
   .diagram-panel {
-    min-height: 600px;
+    min-height: 0;
     padding: var(--space-6);
   }
 
   .source-panel {
     align-self: start;
+    max-height: 100%;
+    overflow: auto;
   }
 
   .diagram-surface {
-    min-height: 480px;
+    min-height: 0;
   }
 }
 

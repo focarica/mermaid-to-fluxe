@@ -45,13 +45,14 @@ app.innerHTML = `
               <button class="zoom-button zoom-fit" id="zoom-fit" type="button">Fit</button>
             </div>
              <button class="zoom-button" id="reset-layout" type="button" disabled>Reset layout</button>
+             <button class="zoom-button" id="export-svg" type="button" disabled>Download SVG</button>
              <button class="export-button" id="export" type="button" disabled>Download PNG</button>
           </div>
         </div>
         <figure class="diagram-surface" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
         </figure>
-        <p class="hint" id="diagram-scroll-hint">Drag entities, attributes, and relationships to reposition; arrow keys nudge focused items. Positions last for this session only. Wide diagrams may need horizontal scrolling.</p>
+        <p class="hint" id="diagram-scroll-hint">Hover or focus an item to trace its connections. Double-click a relationship to center its endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
       </section>
     </div>
@@ -62,6 +63,8 @@ const output = document.querySelector<HTMLDivElement>("#diagram-output");
 const error = document.querySelector<HTMLParagraphElement>("#source-error");
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const exportButton = document.querySelector<HTMLButtonElement>("#export");
+const svgExportButton =
+  document.querySelector<HTMLButtonElement>("#export-svg");
 const zoomOutButton = document.querySelector<HTMLButtonElement>("#zoom-out");
 const zoomInButton = document.querySelector<HTMLButtonElement>("#zoom-in");
 const zoomFitButton = document.querySelector<HTMLButtonElement>("#zoom-fit");
@@ -75,6 +78,7 @@ if (
   !error ||
   !status ||
   !exportButton ||
+  !svgExportButton ||
   !zoomOutButton ||
   !zoomInButton ||
   !zoomFitButton ||
@@ -86,9 +90,11 @@ if (
 }
 const sourceControl = source;
 const outputRegion = output;
+const canvasRegion = diagramSurface;
 const errorMessage = error;
 const statusMessage = status;
 const pngButton = exportButton;
+const svgButton = svgExportButton;
 const zoomOut = zoomOutButton;
 const zoomIn = zoomInButton;
 const zoomFit = zoomFitButton;
@@ -100,6 +106,7 @@ let currentSvg: SVGSVGElement | undefined;
 let currentDiagram: ReturnType<typeof parseErDiagram> | undefined;
 const positionOffsets = new Map<string, { x: number; y: number }>();
 let zoom = 1;
+let fitToView = true;
 let drag:
   | {
       key: string;
@@ -110,9 +117,18 @@ let drag:
       height: number;
     }
   | undefined;
-const minimumZoom = 0.5;
-const maximumZoom = 2;
-const zoomStep = 0.25;
+const minimumZoom = 0.01;
+const zoomStep = 1.25;
+
+function fitScale(svg: SVGSVGElement): number {
+  const width = Number(svg.getAttribute("width"));
+  const height = Number(svg.getAttribute("height"));
+  const availableWidth = canvasRegion.clientWidth - 50;
+  const availableHeight = canvasRegion.clientHeight - 50;
+  if (width <= 0 || height <= 0 || availableWidth <= 0 || availableHeight <= 0)
+    return 1;
+  return Math.min(1, availableWidth / width, availableHeight / height);
+}
 
 function updateZoom(): void {
   const svg = currentSvg;
@@ -124,8 +140,8 @@ function updateZoom(): void {
     svg.style.height = "";
     svg.style.transform = "";
     overflowing =
-      naturalWidth * zoom > outputRegion.clientWidth - 48 ||
-      naturalHeight * zoom > outputRegion.clientHeight - 48;
+      naturalWidth * zoom > canvasRegion.clientWidth - 50 ||
+      naturalHeight * zoom > canvasRegion.clientHeight - 50;
   }
   outputRegion.classList.toggle("is-zoomed", zoom > 1);
   outputRegion.classList.toggle("is-overflowing", overflowing);
@@ -133,8 +149,35 @@ function updateZoom(): void {
   zoomReadout.textContent = zoomReadout.value;
   const diagramAvailable = svg !== undefined;
   zoomOut.disabled = !diagramAvailable || zoom <= minimumZoom;
-  zoomIn.disabled = !diagramAvailable || zoom >= maximumZoom;
+  zoomIn.disabled = !diagramAvailable || !Number.isFinite(zoom * zoomStep);
   zoomFit.disabled = !diagramAvailable;
+}
+
+function setManualZoom(nextZoom: number): void {
+  const svg = currentSvg;
+  const matrix = svg?.getScreenCTM();
+  if (!svg || !matrix) {
+    zoom = nextZoom;
+    updateZoom();
+    return;
+  }
+  const canvasBounds = canvasRegion.getBoundingClientRect();
+  const center = {
+    x: canvasBounds.left + canvasBounds.width / 2,
+    y: canvasBounds.top + canvasBounds.height / 2,
+  };
+  const diagramPoint = new DOMPoint(center.x, center.y).matrixTransform(
+    matrix.inverse(),
+  );
+  zoom = nextZoom;
+  updateZoom();
+  const updatedMatrix = svg.getScreenCTM();
+  if (!updatedMatrix) return;
+  const updatedCenter = diagramPoint.matrixTransform(updatedMatrix);
+  canvasRegion.scrollBy({
+    left: updatedCenter.x - center.x,
+    top: updatedCenter.y - center.y,
+  });
 }
 
 function updatePreview(): void {
@@ -147,7 +190,20 @@ function updatePreview(): void {
           (attribute) => `attribute:${entity.name}:${attribute.name}`,
         ),
       ),
+      ...diagram.entities.flatMap((entity) =>
+        entity.attributes.flatMap((attribute) =>
+          (attribute.components ?? []).map(
+            (component) =>
+              `attribute:${entity.name}:${attribute.name}.${component}`,
+          ),
+        ),
+      ),
       ...diagram.relationships.map((_, index) => `relationship:${index}`),
+      ...diagram.relationships.flatMap((relationship, index) =>
+        (relationship.attributes ?? []).map(
+          (attribute) => `relationship-attribute:${index}:${attribute.name}`,
+        ),
+      ),
     ]);
     for (const key of positionOffsets.keys())
       if (!retainedKeys.has(key)) positionOffsets.delete(key);
@@ -155,6 +211,7 @@ function updatePreview(): void {
     outputRegion.replaceChildren(svg);
     currentSvg = svg;
     currentDiagram = diagram;
+    if (fitToView) zoom = fitScale(svg);
     updateZoom();
     sourceControl.removeAttribute("aria-invalid");
     errorMessage.textContent = "";
@@ -162,6 +219,7 @@ function updatePreview(): void {
     const relationshipCount = diagram.relationships.length;
     statusMessage.textContent = `${entityCount} ${entityCount === 1 ? "entity" : "entities"} · ${relationshipCount} ${relationshipCount === 1 ? "relationship" : "relationships"}`;
     pngButton.disabled = false;
+    svgButton.disabled = false;
     resetLayout.disabled = positionOffsets.size === 0;
   } catch (cause) {
     if (!(cause instanceof ErParseError)) throw cause;
@@ -173,6 +231,7 @@ function updatePreview(): void {
     errorMessage.textContent = cause.message;
     statusMessage.textContent = "Fix the source to generate a diagram.";
     pngButton.disabled = true;
+    svgButton.disabled = true;
     resetLayout.disabled = true;
   }
 }
@@ -215,6 +274,164 @@ outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
   group.style.cursor = "grabbing";
   event.preventDefault();
 });
+
+function traceConnections(group: SVGGElement | null): void {
+  const svg = currentSvg;
+  if (!svg) return;
+  const groups = svg.querySelectorAll<SVGGElement>("g[data-position-key]");
+  const attributeOwner = group?.getAttribute("data-attribute-owner");
+  const key = group?.getAttribute("data-position-key");
+  const entity =
+    group?.getAttribute("data-entity") ??
+    (attributeOwner && !attributeOwner.startsWith("relationship:")
+      ? attributeOwner
+      : null);
+  const selectedRelationship =
+    group?.getAttribute("data-relationship-index") ??
+    (attributeOwner?.startsWith("relationship:")
+      ? attributeOwner.slice("relationship:".length)
+      : key?.startsWith("relationship:")
+        ? key.slice("relationship:".length)
+        : null);
+  if (!group || (!entity && selectedRelationship === null)) {
+    svg.classList.remove("is-tracing");
+    groups.forEach((item) => {
+      item.classList.remove("is-dimmed", "is-trace-focus", "is-trace-context");
+    });
+    svg.querySelectorAll(".attribute-connector.is-dimmed").forEach((line) => {
+      line.classList.remove("is-dimmed");
+    });
+    return;
+  }
+
+  const relationshipIndexes =
+    currentDiagram?.relationships.flatMap((relationship, index) =>
+      entity && (relationship.from === entity || relationship.to === entity)
+        ? [index]
+        : selectedRelationship === String(index)
+          ? [index]
+          : [],
+    ) ?? [];
+  const endpointNames = new Set<string>(entity ? [entity] : []);
+  for (const index of relationshipIndexes) {
+    const relationship = currentDiagram?.relationships[index];
+    if (relationship) {
+      endpointNames.add(relationship.from);
+      endpointNames.add(relationship.to);
+    }
+  }
+  const visibleKeys = new Set<string>([
+    ...endpointNames,
+    ...relationshipIndexes.map((index) => `relationship:${index}`),
+    ...(entity
+      ? [...svg.querySelectorAll<SVGGElement>("g[data-attribute-owner]")]
+          .filter(
+            (item) => item.getAttribute("data-attribute-owner") === entity,
+          )
+          .map((item) => item.getAttribute("data-position-key"))
+          .filter((value): value is string => value !== null)
+      : []),
+    ...relationshipIndexes.flatMap((index) =>
+      [...svg.querySelectorAll<SVGGElement>("g[data-attribute-owner]")]
+        .filter(
+          (item) =>
+            item.getAttribute("data-attribute-owner") ===
+            `relationship:${index}`,
+        )
+        .map((item) => item.getAttribute("data-position-key"))
+        .filter((value): value is string => value !== null),
+    ),
+  ]);
+  svg.classList.add("is-tracing");
+  groups.forEach((item) => {
+    const itemKey = item.getAttribute("data-position-key");
+    item.classList.toggle("is-dimmed", !itemKey || !visibleKeys.has(itemKey));
+    item.classList.toggle("is-trace-focus", item === group);
+    item.classList.toggle(
+      "is-trace-context",
+      item !== group && Boolean(itemKey && visibleKeys.has(itemKey)),
+    );
+  });
+  svg
+    .querySelectorAll<SVGLineElement>(".attribute-connector")
+    .forEach((line) => {
+      const owner = line.getAttribute("data-attribute-owner");
+      const visible =
+        (owner !== null && endpointNames.has(owner) && owner === entity) ||
+        (owner !== null &&
+          relationshipIndexes.some(
+            (index) => owner === `relationship:${index}`,
+          ));
+      line.classList.toggle("is-dimmed", !visible);
+    });
+}
+
+function centerRelationship(group: SVGGElement): void {
+  if (group.getAttribute("data-relationship-index") === null) return;
+  const initialBounds = group.getBoundingClientRect();
+  const fitFactor = Math.min(
+    1,
+    (canvasRegion.clientWidth - 120) / Math.max(initialBounds.width, 1),
+    (canvasRegion.clientHeight - 120) / Math.max(initialBounds.height, 1),
+  );
+  if (fitFactor < 1) {
+    setManualZoom(Math.max(minimumZoom, zoom * fitFactor));
+  }
+  const relationshipBounds = group.getBoundingClientRect();
+  const canvasBounds = canvasRegion.getBoundingClientRect();
+  canvasRegion.scrollBy({
+    left:
+      relationshipBounds.left +
+      relationshipBounds.width / 2 -
+      (canvasBounds.left + canvasBounds.width / 2),
+    top:
+      relationshipBounds.top +
+      relationshipBounds.height / 2 -
+      (canvasBounds.top + canvasBounds.height / 2),
+  });
+}
+
+outputRegion.addEventListener("dblclick", (event: MouseEvent) => {
+  const group =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("g[data-relationship-index]")
+      : null;
+  if (group) centerRelationship(group);
+});
+
+outputRegion.addEventListener("pointerover", (event: PointerEvent) => {
+  const group =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("g[data-position-key]")
+      : null;
+  if (group) traceConnections(group);
+});
+outputRegion.addEventListener("pointerout", (event: PointerEvent) => {
+  const previous =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("g[data-position-key]")
+      : null;
+  const next =
+    event.relatedTarget instanceof Element
+      ? event.relatedTarget.closest<SVGGElement>("g[data-position-key]")
+      : null;
+  if (previous && previous !== next) traceConnections(next);
+});
+outputRegion.addEventListener("focusin", (event: FocusEvent) => {
+  const group =
+    event.target instanceof Element
+      ? event.target.closest<SVGGElement>("g[data-position-key]")
+      : null;
+  if (group) traceConnections(group);
+});
+outputRegion.addEventListener("focusout", (event: FocusEvent) => {
+  const next =
+    event.relatedTarget instanceof Element
+      ? event.relatedTarget.closest<SVGGElement>("g[data-position-key]")
+      : null;
+  traceConnections(next);
+});
+
 outputRegion.addEventListener("pointermove", (event: PointerEvent) => {
   if (!drag || drag.pointerId !== event.pointerId) return;
   const point = diagramPoint(event.clientX, event.clientY);
@@ -273,17 +490,20 @@ outputRegion.addEventListener("pointercancel", endDrag);
 outputRegion.addEventListener("lostpointercapture", endDrag);
 
 outputRegion.addEventListener("keydown", (event: KeyboardEvent) => {
-  if (
-    !currentDiagram ||
-    !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
-  )
-    return;
+  if (!currentDiagram) return;
   const item =
     event.target instanceof Element
       ? event.target.closest<SVGGElement>("[data-position-key]")
       : null;
   const key = item?.getAttribute("data-position-key");
-  if (!key) return;
+  if (!item || !key) return;
+  if (event.key === "Enter" && item.hasAttribute("data-relationship-index")) {
+    event.preventDefault();
+    centerRelationship(item);
+    return;
+  }
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key))
+    return;
   event.preventDefault();
   const offset = positionOffsets.get(key) ?? { x: 0, y: 0 };
   const step = event.shiftKey ? 20 : 8;
@@ -322,8 +542,14 @@ function downloadPng(): void {
   image.onload = () => {
     URL.revokeObjectURL(imageUrl);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(width * 2);
-    canvas.height = Math.ceil(height * 2);
+    const scale = Math.min(
+      4,
+      16000 / width,
+      16000 / height,
+      Math.sqrt(40_000_000 / (width * height)),
+    );
+    canvas.width = Math.ceil(width * scale);
+    canvas.height = Math.ceil(height * scale);
     const context = canvas.getContext("2d");
     if (!context) {
       statusMessage.textContent = "PNG export is unavailable in this browser.";
@@ -353,6 +579,31 @@ function downloadPng(): void {
   image.src = imageUrl;
 }
 
+function downloadSvg(): void {
+  const svg = currentSvg;
+  if (!svg) return;
+  const { width, height } = svg.viewBox.baseVal;
+  const copy = svg.cloneNode(true);
+  if (!(copy instanceof SVGSVGElement)) return;
+  copy.style.removeProperty("width");
+  copy.style.removeProperty("height");
+  copy.style.removeProperty("transform");
+  copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  copy.setAttribute("width", String(width));
+  copy.setAttribute("height", String(height));
+  const downloadUrl = URL.createObjectURL(
+    new Blob([new XMLSerializer().serializeToString(copy)], {
+      type: "image/svg+xml;charset=utf-8",
+    }),
+  );
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = "fluxe-erd.svg";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  statusMessage.textContent = "SVG downloaded.";
+}
+
 sourceControl.addEventListener("input", updatePreview);
 resetLayout.addEventListener("click", () => {
   positionOffsets.clear();
@@ -365,17 +616,24 @@ resetLayout.addEventListener("click", () => {
   resetLayout.disabled = true;
 });
 pngButton.addEventListener("click", downloadPng);
+svgButton.addEventListener("click", downloadSvg);
 zoomOut.addEventListener("click", () => {
-  zoom = Math.max(minimumZoom, zoom - zoomStep);
-  updateZoom();
+  fitToView = false;
+  setManualZoom(Math.max(minimumZoom, zoom / zoomStep));
 });
 zoomIn.addEventListener("click", () => {
-  zoom = Math.min(maximumZoom, zoom + zoomStep);
-  updateZoom();
+  fitToView = false;
+  setManualZoom(zoom * zoomStep);
 });
 zoomFit.addEventListener("click", () => {
-  zoom = 1;
+  fitToView = true;
+  if (currentSvg) zoom = fitScale(currentSvg);
   diagramSurface.scrollTo({ left: 0, top: 0 });
+  updateZoom();
+});
+window.addEventListener("resize", () => {
+  if (!fitToView || !currentSvg) return;
+  zoom = fitScale(currentSvg);
   updateZoom();
 });
 diagramSurface.addEventListener("keydown", (event: KeyboardEvent) => {

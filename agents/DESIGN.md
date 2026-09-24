@@ -51,7 +51,7 @@ The drawing uses the UI sans stack for legible labels and the mono stack only wh
 
 Use a 4px base rhythm: `--space-1: 4px`, `--space-2: 8px`, `--space-3: 12px`, `--space-4: 16px`, `--space-5: 20px`, `--space-6: 24px`, `--space-8: 32px`, `--space-10: 40px`. Use browser intrinsic sizing and `minmax()` where content dictates dimensions.
 
-The editor shell is a three-zone composition: a compact source panel, a dominant canvas, and a narrow action area that can collapse below the source on small viewports. At desktop, source and canvas remain side by side, with the canvas taking the flexible remainder. Diagram overflow scrolls within the canvas only; source content scrolls inside its own panel. The SVG is non-editable. Canvas zoom ranges from 50% to 200%, with an explicit Fit reset to 100%; diagram overflow remains scrollable. At 375px, panels stack in task order and the canvas retains a useful minimum working height without forcing page-wide horizontal scrolling. Breakpoints: 640px, 768px, 1024px, 1280px.
+The editor shell is a three-zone composition: a compact source panel, a dominant canvas, and a narrow action area that can collapse below the source on small viewports. At desktop, source and canvas remain side by side, with the canvas taking the flexible remainder. The workbench fits the viewport height; diagram overflow scrolls within the canvas only, and source content scrolls inside its own panel. The SVG is non-editable. Diagrams start fitted to the canvas; users can zoom out to 1% and zoom in without a fixed upper limit. Manual zoom keeps the canvas center in focus. Fit recalculates for the current canvas size. At 375px, panels stack in task order and the canvas retains a useful minimum working height without forcing page-wide horizontal scrolling. Breakpoints: 640px, 768px, 1024px, 1280px.
 
 ## 5. Components
 
@@ -70,14 +70,14 @@ These contracts describe the implemented MVP workbench and Chen renderer. The so
 - **Structure**: labelled, keyboard-focusable figure/work region, drawing surface, and empty and error explanation where appropriate.
 - **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG structure is non-editable, with session-only entity-cluster repositioning.
 - **Spacing**: canvas padding `--space-8`; controls cluster `--space-2`; canvas gutters can grow with viewport.
-- **States**: default, empty, error, and zoomed (50%–200%).
-- **Accessibility**: SVG includes title and description. Entity groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
+- **States**: default, empty, error, fitted, and manually zoomed.
+- **Accessibility**: SVG includes title and description. Entity, relationship, and attribute groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Hover or focus traces connected groups and dims unrelated groups without removing them. Double-click or press Enter on a relationship to center its connected endpoints. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
 - **Motion**: diagram output remains still; zoom changes scale without animation.
 - **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document.
 
 ### Action Controls
-- **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls and PNG download button.
-- **Variants**: PNG export and all zoom controls are disabled when no valid diagram is available; zoom is bounded and fit resets to 100%.
+- **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls, SVG export, and PNG download buttons.
+- **Variants**: both export buttons and all zoom controls are disabled when no valid diagram is available; Fit scales the drawing to the current canvas viewport.
 - **Spacing**: cluster gap `--space-2`; minimum hit target 44px.
 - **States**: hover, active, focus-visible, disabled, and status feedback for valid or invalid source; no loading state.
 - **Accessibility**: native buttons with descriptive names, visible keyboard focus, readable zoom percentage, status feedback announced without stealing focus.

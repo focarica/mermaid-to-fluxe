@@ -44,7 +44,7 @@ app.innerHTML = `
           <div class="diagram-output" id="diagram-output"></div>
           <p class="empty-prompt">Your Chen diagram will appear here.</p>
         </figure>
-        <p class="hint" id="diagram-scroll-hint">Hover or focus an item to trace connections; click or press Space to pin one for export. Click again or Clear trace to unpin. Double-click or press Enter on a relationship to center endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
+        <p class="hint" id="diagram-scroll-hint">Scroll to zoom; drag the open canvas to pan. Use Ctrl + + or Ctrl + − while the canvas is focused. Hover or focus an item to trace connections; click or press Space to pin one for export. Click again or Clear trace to unpin. Double-click or press Enter on a relationship to center endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
       </section>
     </div>
@@ -108,6 +108,10 @@ const tracePin = createTracePin();
 const positionOffsets = new Map<string, { x: number; y: number }>();
 let zoom = 1;
 let fitToView = true;
+let canvasPan = { x: 0, y: 0 };
+let canvasPanGesture:
+  | { pointerId: number; lastClient: { x: number; y: number } }
+  | undefined;
 let drag:
   | {
       key: string;
@@ -145,6 +149,7 @@ function updateZoom(): void {
     svg.style.width = `${naturalWidth * zoom}px`;
     svg.style.height = "";
     svg.style.transform = "";
+    svg.style.translate = `${canvasPan.x}px ${canvasPan.y}px`;
     overflowing =
       naturalWidth * zoom > canvasRegion.clientWidth - 50 ||
       naturalHeight * zoom > canvasRegion.clientHeight - 50;
@@ -241,7 +246,10 @@ function updatePreview(): void {
     currentSvg = svg;
     currentDiagram = diagram;
     traceConnections(null);
-    if (fitToView) zoom = fitScale(svg);
+    if (fitToView) {
+      zoom = fitScale(svg);
+      canvasPan = { x: 0, y: 0 };
+    }
     updateZoom();
     sourceControl.removeAttribute("aria-invalid");
     errorMessage.textContent = "";
@@ -297,6 +305,20 @@ function touchCenter(): { x: number; y: number } | undefined {
 }
 
 canvasRegion.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (event.pointerType === "mouse") {
+    if (event.button !== 0 || !event.isPrimary || drag) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("[data-position-key]"))
+      return;
+    canvasPanGesture = {
+      pointerId: event.pointerId,
+      lastClient: { x: event.clientX, y: event.clientY },
+    };
+    canvasRegion.classList.add("is-panning");
+    canvasRegion.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return;
+  }
   if (event.pointerType !== "touch") return;
   touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
   const distance = touchDistance();
@@ -308,6 +330,26 @@ canvasRegion.addEventListener("pointerdown", (event: PointerEvent) => {
     event.preventDefault();
   }
 });
+
+canvasRegion.addEventListener("pointermove", (event: PointerEvent) => {
+  if (canvasPanGesture?.pointerId !== event.pointerId) return;
+  canvasPan.x += event.clientX - canvasPanGesture.lastClient.x;
+  canvasPan.y += event.clientY - canvasPanGesture.lastClient.y;
+  canvasPanGesture.lastClient = { x: event.clientX, y: event.clientY };
+  if (currentSvg) {
+    currentSvg.style.translate = `${canvasPan.x}px ${canvasPan.y}px`;
+  }
+  event.preventDefault();
+});
+
+const endCanvasPan = (event: PointerEvent): void => {
+  if (canvasPanGesture?.pointerId !== event.pointerId) return;
+  canvasPanGesture = undefined;
+  canvasRegion.classList.remove("is-panning");
+};
+canvasRegion.addEventListener("pointerup", endCanvasPan);
+canvasRegion.addEventListener("pointercancel", endCanvasPan);
+canvasRegion.addEventListener("lostpointercapture", endCanvasPan);
 
 canvasRegion.addEventListener("pointermove", (event: PointerEvent) => {
   const previousPoint = touchPoints.get(event.pointerId);
@@ -338,6 +380,25 @@ const endTouchGesture = (event: PointerEvent): void => {
 };
 canvasRegion.addEventListener("pointerup", endTouchGesture);
 canvasRegion.addEventListener("pointercancel", endTouchGesture);
+
+canvasRegion.addEventListener(
+  "wheel",
+  (event: WheelEvent) => {
+    if (!currentSvg || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    fitToView = false;
+    const delta =
+      event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1);
+    const factor = Math.exp(
+      Math.max(-5, Math.min(5, (-delta * Math.log(zoomStep)) / 100)),
+    );
+    setManualZoom(Math.max(minimumZoom, zoom * factor), {
+      x: event.clientX,
+      y: event.clientY,
+    });
+  },
+  { passive: false },
+);
 
 outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
   if (event.button !== 0 || !event.isPrimary) return;
@@ -833,6 +894,7 @@ zoomIn.addEventListener("click", () => {
 });
 zoomFit.addEventListener("click", () => {
   fitToView = true;
+  canvasPan = { x: 0, y: 0 };
   if (currentSvg) zoom = fitScale(currentSvg);
   diagramSurface.scrollTo({ left: 0, top: 0 });
   updateZoom();
@@ -843,6 +905,33 @@ window.addEventListener("resize", () => {
   updateZoom();
 });
 diagramSurface.addEventListener("keydown", (event: KeyboardEvent) => {
+  if ((event.ctrlKey || event.metaKey) && currentSvg) {
+    if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") {
+      event.preventDefault();
+      fitToView = false;
+      setManualZoom(zoom * zoomStep);
+      return;
+    }
+    if (
+      event.key === "-" ||
+      event.key === "−" ||
+      event.code === "NumpadSubtract"
+    ) {
+      event.preventDefault();
+      fitToView = false;
+      setManualZoom(Math.max(minimumZoom, zoom / zoomStep));
+      return;
+    }
+    if (event.key === "0" || event.code === "Numpad0") {
+      event.preventDefault();
+      fitToView = true;
+      canvasPan = { x: 0, y: 0 };
+      zoom = fitScale(currentSvg);
+      diagramSurface.scrollTo({ left: 0, top: 0 });
+      updateZoom();
+      return;
+    }
+  }
   if (
     event.target instanceof Element &&
     event.target.closest("[data-position-key]")

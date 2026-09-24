@@ -307,6 +307,14 @@ code {
   touch-action: none;
 }
 
+.diagram-surface:not(.is-empty) {
+  cursor: grab;
+}
+
+.diagram-surface.is-panning {
+  cursor: grabbing;
+}
+
 .diagram-surface:focus-visible {
   outline: var(--space-1) solid var(--color-accent);
   outline-offset: var(--space-1);

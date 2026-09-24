@@ -71,16 +71,17 @@ These contracts describe the implemented MVP workbench and Chen renderer. The so
 - **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG structure is non-editable, with session-only entity-cluster repositioning.
 - **Spacing**: canvas padding `--space-8`; controls cluster `--space-2`; canvas gutters can grow with viewport.
 - **States**: default, empty, error, fitted, and manually zoomed.
-- **Accessibility**: SVG includes title and description. Entity, relationship, and attribute groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Touch supports pinch zoom, one-finger canvas panning, and dragging diagram items. Hover or focus traces connected groups and dims unrelated groups without removing them. Double-click or press Enter on a relationship to center its connected endpoints. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
+- **Accessibility**: SVG includes title and description. Entity, relationship, and attribute groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Space or click pins one existing trace; repeated click/Space toggles it, another node replaces it, and Clear trace unpins. A persistent visible cue names pinned node for export and clears when pin clears or its stable key disappears. Hover/focus never override a pin. A source edit retains a pin only while its `data-position-key` survives. Touch supports pinch zoom, one-finger canvas panning, and dragging diagram items. Hover or focus traces connected groups and dims unrelated groups without removing them. Double-click or press Enter on a relationship to center its connected endpoints. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
 - **Motion**: diagram output remains still; zoom changes scale without animation.
 - **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document. On narrow screens the canvas has a viewport-bounded height and begins at its top edge, with compact controls wrapping into rows.
 
 ### Action Controls
-- **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls, SVG export, and PNG download buttons.
+- **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls, SVG export, PNG download, and clear-trace buttons.
 - **Variants**: both export buttons and all zoom controls are disabled when no valid diagram is available; Fit scales the drawing to the current canvas viewport.
 - **Spacing**: cluster gap `--space-2`; minimum hit target 44px.
 - **States**: hover, active, focus-visible, disabled, and status feedback for valid or invalid source; no loading state.
 - **Accessibility**: native buttons with descriptive names, visible keyboard focus, readable zoom percentage, status feedback announced without stealing focus.
+- **Export**: exports preserve complete diagram bounds; pinned trace opacity and focus emphasis are serialized into SVG so SVG and PNG output do not depend on app CSS.
 - **Motion**: pressed feedback may use a small transform; state feedback is brief opacity/color. No decorative loops.
 - **Layout**: action cluster in editor chrome, wraps or stacks below the source on narrow screens.
 

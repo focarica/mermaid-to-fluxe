@@ -125,6 +125,14 @@ textarea {
   gap: var(--space-3);
 }
 
+.pin-status {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  color: var(--color-accent);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .diagram-actions,
 .zoom-controls {
   display: flex;
@@ -361,6 +369,10 @@ code {
 
 .diagram-output svg.is-tracing g.is-trace-context {
   opacity: 0.58;
+}
+
+.diagram-output svg.is-pinned-tracing g.is-trace-context {
+  opacity: 0.82;
 }
 
 .diagram-output svg.is-tracing g.is-trace-focus {

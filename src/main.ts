@@ -1,4 +1,5 @@
 import "./style.css";
+import { createTracePin } from "./interaction";
 import { ErParseError, parseErDiagram } from "./parser/parser";
 import { renderDiagram } from "./render/render";
 
@@ -33,15 +34,17 @@ app.innerHTML = `
               <button class="zoom-button zoom-fit" id="zoom-fit" type="button">Fit</button>
             </div>
              <button class="zoom-button" id="reset-layout" type="button" aria-label="Reset layout" disabled><span class="action-label-full">Reset layout</span><span class="action-label-short">Reset</span></button>
+             <button class="zoom-button" id="clear-trace" type="button" aria-label="Clear pinned trace" disabled>Clear trace</button>
              <button class="zoom-button" id="export-svg" type="button" aria-label="Download SVG" disabled><span class="action-label-full">Download SVG</span><span class="action-label-short">SVG</span></button>
              <button class="export-button" id="export" type="button" aria-label="Download PNG" disabled><span class="action-label-full">Download PNG</span><span class="action-label-short">PNG</span></button>
           </div>
         </div>
+        <p class="pin-status" id="pin-status" hidden aria-live="off"></p>
         <figure class="diagram-surface is-empty" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
           <p class="empty-prompt">Your Chen diagram will appear here.</p>
         </figure>
-        <p class="hint" id="diagram-scroll-hint">Hover or focus an item to trace its connections. Double-click a relationship to center its endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
+        <p class="hint" id="diagram-scroll-hint">Hover or focus an item to trace connections; click or press Space to pin one for export. Click again or Clear trace to unpin. Double-click or press Enter on a relationship to center endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
       </section>
     </div>
@@ -51,6 +54,7 @@ const source = document.querySelector<HTMLTextAreaElement>("#source");
 const output = document.querySelector<HTMLDivElement>("#diagram-output");
 const error = document.querySelector<HTMLParagraphElement>("#source-error");
 const status = document.querySelector<HTMLParagraphElement>("#status");
+const pinStatus = document.querySelector<HTMLParagraphElement>("#pin-status");
 const exportButton = document.querySelector<HTMLButtonElement>("#export");
 const svgExportButton =
   document.querySelector<HTMLButtonElement>("#export-svg");
@@ -61,12 +65,15 @@ const zoomLevel = document.querySelector<HTMLOutputElement>("#zoom-level");
 const resetLayoutButton =
   document.querySelector<HTMLButtonElement>("#reset-layout");
 const pasteButton = document.querySelector<HTMLButtonElement>("#paste-source");
+const clearTraceButton =
+  document.querySelector<HTMLButtonElement>("#clear-trace");
 const diagramSurface = document.querySelector<HTMLElement>(".diagram-surface");
 if (
   !source ||
   !output ||
   !error ||
   !status ||
+  !pinStatus ||
   !exportButton ||
   !svgExportButton ||
   !zoomOutButton ||
@@ -75,6 +82,7 @@ if (
   !zoomLevel ||
   !resetLayoutButton ||
   !pasteButton ||
+  !clearTraceButton ||
   !diagramSurface
 ) {
   throw new Error("Workbench controls are missing");
@@ -82,6 +90,7 @@ if (
 const sourceControl = source;
 const outputRegion = output;
 const canvasRegion = diagramSurface;
+const pinnedCue = pinStatus;
 const errorMessage = error;
 const statusMessage = status;
 const pngButton = exportButton;
@@ -92,8 +101,10 @@ const zoomFit = zoomFitButton;
 const zoomReadout = zoomLevel;
 const resetLayout = resetLayoutButton;
 const pasteSource = pasteButton;
+const clearTrace = clearTraceButton;
 let currentSvg: SVGSVGElement | undefined;
 let currentDiagram: ReturnType<typeof parseErDiagram> | undefined;
+const tracePin = createTracePin();
 const positionOffsets = new Map<string, { x: number; y: number }>();
 let zoom = 1;
 let fitToView = true;
@@ -101,6 +112,7 @@ let drag:
   | {
       key: string;
       pointerId: number;
+      startClient: { x: number; y: number };
       lastClient: { x: number; y: number };
       viewBox: string;
       width: number;
@@ -180,6 +192,10 @@ function setManualZoom(
 function updatePreview(): void {
   if (!sourceControl.value.trim()) {
     outputRegion.replaceChildren();
+    tracePin.retain(new Set());
+    pinnedCue.textContent = "";
+    pinnedCue.hidden = true;
+    clearTrace.disabled = true;
     currentSvg = undefined;
     currentDiagram = undefined;
     canvasRegion.classList.add("is-empty");
@@ -218,11 +234,13 @@ function updatePreview(): void {
     ]);
     for (const key of positionOffsets.keys())
       if (!retainedKeys.has(key)) positionOffsets.delete(key);
+    tracePin.retain(retainedKeys);
     const svg = renderDiagram(diagram, document, positionOffsets);
     outputRegion.replaceChildren(svg);
     canvasRegion.classList.remove("is-empty");
     currentSvg = svg;
     currentDiagram = diagram;
+    traceConnections(null);
     if (fitToView) zoom = fitScale(svg);
     updateZoom();
     sourceControl.removeAttribute("aria-invalid");
@@ -335,6 +353,7 @@ outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
   drag = {
     key,
     pointerId: event.pointerId,
+    startClient: { x: event.clientX, y: event.clientY },
     lastClient: { x: event.clientX, y: event.clientY },
     viewBox,
     width: svgBounds.width,
@@ -350,22 +369,45 @@ outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
 function traceConnections(group: SVGGElement | null): void {
   const svg = currentSvg;
   if (!svg) return;
+  const activeKey = tracePin.activeKey(
+    group?.getAttribute("data-position-key") ?? null,
+  );
+  const pinnedKey = tracePin.activeKey(null);
+  const activeGroup = activeKey
+    ? svg.querySelector<SVGGElement>(
+        `[data-position-key="${CSS.escape(activeKey)}"]`,
+      )
+    : null;
+  clearTrace.disabled = tracePin.activeKey(null) === null;
+  svg.classList.toggle("is-pinned-tracing", pinnedKey !== null);
+  pinnedCue.hidden = pinnedKey === null;
+  pinnedCue.textContent =
+    pinnedKey === null
+      ? ""
+      : `Pinned for export: ${pinnedTargetName(activeGroup, pinnedKey)}`;
   const groups = svg.querySelectorAll<SVGGElement>("g[data-position-key]");
-  const attributeOwner = group?.getAttribute("data-attribute-owner");
-  const key = group?.getAttribute("data-position-key");
+  groups.forEach((item) => {
+    if (item === activeGroup && tracePin.activeKey(null) !== null) {
+      item.setAttribute("aria-description", "Pinned trace");
+    } else {
+      item.removeAttribute("aria-description");
+    }
+  });
+  const attributeOwner = activeGroup?.getAttribute("data-attribute-owner");
+  const key = activeGroup?.getAttribute("data-position-key");
   const entity =
-    group?.getAttribute("data-entity") ??
+    activeGroup?.getAttribute("data-entity") ??
     (attributeOwner && !attributeOwner.startsWith("relationship:")
       ? attributeOwner
       : null);
   const selectedRelationship =
-    group?.getAttribute("data-relationship-index") ??
+    activeGroup?.getAttribute("data-relationship-index") ??
     (attributeOwner?.startsWith("relationship:")
       ? attributeOwner.slice("relationship:".length)
       : key?.startsWith("relationship:")
         ? key.slice("relationship:".length)
         : null);
-  if (!group || (!entity && selectedRelationship === null)) {
+  if (!activeGroup || (!entity && selectedRelationship === null)) {
     svg.classList.remove("is-tracing");
     groups.forEach((item) => {
       item.classList.remove("is-dimmed", "is-trace-focus", "is-trace-context");
@@ -418,10 +460,10 @@ function traceConnections(group: SVGGElement | null): void {
   groups.forEach((item) => {
     const itemKey = item.getAttribute("data-position-key");
     item.classList.toggle("is-dimmed", !itemKey || !visibleKeys.has(itemKey));
-    item.classList.toggle("is-trace-focus", item === group);
+    item.classList.toggle("is-trace-focus", item === activeGroup);
     item.classList.toggle(
       "is-trace-context",
-      item !== group && Boolean(itemKey && visibleKeys.has(itemKey)),
+      item !== activeGroup && Boolean(itemKey && visibleKeys.has(itemKey)),
     );
   });
   svg
@@ -436,6 +478,33 @@ function traceConnections(group: SVGGElement | null): void {
           ));
       line.classList.toggle("is-dimmed", !visible);
     });
+}
+
+function pinnedTargetName(group: SVGGElement | null, key: string): string {
+  const entity = group?.getAttribute("data-entity");
+  if (entity) return entity;
+  const owner = group?.getAttribute("data-attribute-owner");
+  const attribute = group?.getAttribute("data-attribute");
+  if (owner && attribute) {
+    if (owner.startsWith("relationship:")) {
+      const relationshipIndex = Number(owner.slice("relationship:".length));
+      const label = currentDiagram?.relationships[relationshipIndex]?.label;
+      return label ? `${label}.${attribute}` : key;
+    }
+    return `${owner}.${attribute}`;
+  }
+  const relationshipIndex = Number(
+    group?.getAttribute("data-relationship-index") ??
+      key.slice("relationship:".length),
+  );
+  if (Number.isInteger(relationshipIndex) && relationshipIndex >= 0) {
+    return currentDiagram?.relationships[relationshipIndex]?.label ?? key;
+  }
+  return key;
+}
+
+function reapplyPinnedTrace(): void {
+  if (tracePin.activeKey(null) !== null) traceConnections(null);
 }
 
 function centerRelationship(group: SVGGElement): void {
@@ -527,10 +596,17 @@ outputRegion.addEventListener("pointermove", (event: PointerEvent) => {
   svg.style.height = `${drag.height}px`;
   svg.style.overflow = "visible";
   resetLayout.disabled = false;
+  reapplyPinnedTrace();
 });
 const endDrag = (event: PointerEvent): void => {
   const activeDrag = drag;
   if (activeDrag?.pointerId !== event.pointerId) return;
+  const clickDistance = Math.hypot(
+    event.clientX - activeDrag.startClient.x,
+    event.clientY - activeDrag.startClient.y,
+  );
+  // Ignore small pointer jitter; movement beyond 5 CSS pixels is a drag.
+  const shouldPin = event.type === "pointerup" && clickDistance <= 5;
   const previousSvg = currentSvg;
   const previousBounds = previousSvg?.getBoundingClientRect();
   const previousMatrix = previousSvg?.getScreenCTM();
@@ -556,6 +632,17 @@ const endDrag = (event: PointerEvent): void => {
   const expandedBounds = svg.getBoundingClientRect();
   svg.style.transform = `translate(${desiredLeft - expandedBounds.left}px, ${desiredTop - expandedBounds.top}px)`;
   resetLayout.disabled = positionOffsets.size === 0;
+  if (shouldPin) {
+    const group = svg.querySelector<SVGGElement>(
+      `[data-position-key="${CSS.escape(activeDrag.key)}"]`,
+    );
+    if (group) {
+      tracePin.toggle(activeDrag.key);
+      traceConnections(null);
+    }
+  } else {
+    reapplyPinnedTrace();
+  }
 };
 outputRegion.addEventListener("pointerup", endDrag);
 outputRegion.addEventListener("pointercancel", endDrag);
@@ -569,6 +656,12 @@ outputRegion.addEventListener("keydown", (event: KeyboardEvent) => {
       : null;
   const key = item?.getAttribute("data-position-key");
   if (!item || !key) return;
+  if (event.key === " " || event.key === "Spacebar") {
+    event.preventDefault();
+    tracePin.toggle(key);
+    traceConnections(null);
+    return;
+  }
   if (event.key === "Enter" && item.hasAttribute("data-relationship-index")) {
     event.preventDefault();
     centerRelationship(item);
@@ -589,6 +682,7 @@ outputRegion.addEventListener("keydown", (event: KeyboardEvent) => {
   currentSvg = svg;
   updateZoom();
   resetLayout.disabled = false;
+  reapplyPinnedTrace();
   outputRegion
     .querySelector<SVGGElement>(`[data-position-key="${CSS.escape(key)}"]`)
     ?.focus();
@@ -601,6 +695,7 @@ function downloadPng(): void {
   const { width, height } = svg.viewBox.baseVal;
   const copy = svg.cloneNode(true);
   if (!(copy instanceof SVGSVGElement)) return;
+  embedTraceStyles(copy);
   copy.style.removeProperty("width");
   copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   copy.setAttribute("width", String(width));
@@ -657,6 +752,7 @@ function downloadSvg(): void {
   const { width, height } = svg.viewBox.baseVal;
   const copy = svg.cloneNode(true);
   if (!(copy instanceof SVGSVGElement)) return;
+  embedTraceStyles(copy);
   copy.style.removeProperty("width");
   copy.style.removeProperty("height");
   copy.style.removeProperty("transform");
@@ -676,7 +772,33 @@ function downloadSvg(): void {
   statusMessage.textContent = "SVG downloaded.";
 }
 
+function embedTraceStyles(copy: SVGSVGElement): void {
+  if (tracePin.activeKey(null) === null) return;
+  copy
+    .querySelectorAll<SVGGElement>("g[data-position-key]")
+    .forEach((group) => {
+      if (group.classList.contains("is-dimmed")) group.style.opacity = "0.08";
+      if (group.classList.contains("is-trace-context"))
+        group.style.opacity = "0.82";
+      if (group.classList.contains("is-trace-focus")) {
+        group.style.opacity = "1";
+        group.style.filter = "drop-shadow(0 0 3px rgb(166 79 54 / 42%))";
+      }
+    });
+  copy
+    .querySelectorAll<SVGElement>(".attribute-connector.is-dimmed")
+    .forEach((line) => {
+      line.style.opacity = "0.08";
+    });
+}
+
 sourceControl.addEventListener("input", updatePreview);
+clearTrace.addEventListener("click", () => {
+  tracePin.clear();
+  pinnedCue.textContent = "";
+  pinnedCue.hidden = true;
+  traceConnections(null);
+});
 pasteSource.addEventListener("click", async () => {
   try {
     sourceControl.value = await navigator.clipboard.readText();
@@ -697,6 +819,7 @@ resetLayout.addEventListener("click", () => {
   currentSvg = svg;
   updateZoom();
   resetLayout.disabled = true;
+  reapplyPinnedTrace();
 });
 pngButton.addEventListener("click", downloadPng);
 svgButton.addEventListener("click", downloadSvg);

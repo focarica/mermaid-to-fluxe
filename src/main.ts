@@ -2,18 +2,6 @@ import "./style.css";
 import { ErParseError, parseErDiagram } from "./parser/parser";
 import { renderDiagram } from "./render/render";
 
-const sample = `erDiagram
-  CUSTOMER {
-    int id PK
-    string name
-    string email UK
-  }
-  ORDER {
-    int id PK
-    date placed_at
-  }
-  CUSTOMER ||--o{ ORDER : places`;
-
 const app = document.getElementById("app");
 if (!(app instanceof HTMLElement)) throw new Error("App root is missing");
 
@@ -29,9 +17,9 @@ app.innerHTML = `
           <div><p class="eyebrow">SOURCE</p><h1 id="source-title">ER diagram</h1></div>
           <span class="format-tag">MERMAID ER</span>
         </div>
-        <label for="source">Mermaid ER syntax</label>
-        <textarea id="source" spellcheck="false" aria-describedby="source-help source-error"></textarea>
-        <p class="hint" id="source-help">Edit the sample or paste your own <code>erDiagram</code>.</p>
+        <div class="source-label-row"><label for="source">Mermaid ER syntax</label><button class="zoom-button paste-button" id="paste-source" type="button">Paste</button></div>
+        <textarea id="source" spellcheck="false" placeholder="erDiagram&#10;  CUSTOMER {&#10;    int id PK&#10;    string name&#10;  }&#10;  ORDER {&#10;    int id PK&#10;  }&#10;  CUSTOMER ||--o{ ORDER : places" aria-describedby="source-help source-error"></textarea>
+        <p class="hint" id="source-help">Paste Mermaid ER syntax or type a diagram to see the Chen notation preview.</p>
         <p class="error" id="source-error" role="alert" aria-live="polite"></p>
       </section>
       <section class="diagram-panel" aria-labelledby="diagram-title">
@@ -44,13 +32,14 @@ app.innerHTML = `
               <button class="zoom-button" id="zoom-in" type="button" aria-label="Zoom in">+</button>
               <button class="zoom-button zoom-fit" id="zoom-fit" type="button">Fit</button>
             </div>
-             <button class="zoom-button" id="reset-layout" type="button" disabled>Reset layout</button>
-             <button class="zoom-button" id="export-svg" type="button" disabled>Download SVG</button>
-             <button class="export-button" id="export" type="button" disabled>Download PNG</button>
+             <button class="zoom-button" id="reset-layout" type="button" aria-label="Reset layout" disabled><span class="action-label-full">Reset layout</span><span class="action-label-short">Reset</span></button>
+             <button class="zoom-button" id="export-svg" type="button" aria-label="Download SVG" disabled><span class="action-label-full">Download SVG</span><span class="action-label-short">SVG</span></button>
+             <button class="export-button" id="export" type="button" aria-label="Download PNG" disabled><span class="action-label-full">Download PNG</span><span class="action-label-short">PNG</span></button>
           </div>
         </div>
-        <figure class="diagram-surface" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
+        <figure class="diagram-surface is-empty" tabindex="0" aria-label="Generated entity relationship diagram" aria-describedby="diagram-scroll-hint">
           <div class="diagram-output" id="diagram-output"></div>
+          <p class="empty-prompt">Your Chen diagram will appear here.</p>
         </figure>
         <p class="hint" id="diagram-scroll-hint">Hover or focus an item to trace its connections. Double-click a relationship to center its endpoints. Drag items to reposition; arrow keys nudge focused items.</p>
         <p class="status" id="status" role="status" aria-live="polite"></p>
@@ -71,6 +60,7 @@ const zoomFitButton = document.querySelector<HTMLButtonElement>("#zoom-fit");
 const zoomLevel = document.querySelector<HTMLOutputElement>("#zoom-level");
 const resetLayoutButton =
   document.querySelector<HTMLButtonElement>("#reset-layout");
+const pasteButton = document.querySelector<HTMLButtonElement>("#paste-source");
 const diagramSurface = document.querySelector<HTMLElement>(".diagram-surface");
 if (
   !source ||
@@ -84,6 +74,7 @@ if (
   !zoomFitButton ||
   !zoomLevel ||
   !resetLayoutButton ||
+  !pasteButton ||
   !diagramSurface
 ) {
   throw new Error("Workbench controls are missing");
@@ -100,8 +91,7 @@ const zoomIn = zoomInButton;
 const zoomFit = zoomFitButton;
 const zoomReadout = zoomLevel;
 const resetLayout = resetLayoutButton;
-
-sourceControl.value = sample;
+const pasteSource = pasteButton;
 let currentSvg: SVGSVGElement | undefined;
 let currentDiagram: ReturnType<typeof parseErDiagram> | undefined;
 const positionOffsets = new Map<string, { x: number; y: number }>();
@@ -119,6 +109,10 @@ let drag:
   | undefined;
 const minimumZoom = 0.01;
 const zoomStep = 1.25;
+const touchPoints = new Map<number, { x: number; y: number }>();
+let pinch:
+  | { distance: number; zoom: number; center: { x: number; y: number } }
+  | undefined;
 
 function fitScale(svg: SVGSVGElement): number {
   const width = Number(svg.getAttribute("width"));
@@ -153,7 +147,10 @@ function updateZoom(): void {
   zoomFit.disabled = !diagramAvailable;
 }
 
-function setManualZoom(nextZoom: number): void {
+function setManualZoom(
+  nextZoom: number,
+  focusPoint?: { x: number; y: number },
+): void {
   const svg = currentSvg;
   const matrix = svg?.getScreenCTM();
   if (!svg || !matrix) {
@@ -162,7 +159,7 @@ function setManualZoom(nextZoom: number): void {
     return;
   }
   const canvasBounds = canvasRegion.getBoundingClientRect();
-  const center = {
+  const center = focusPoint ?? {
     x: canvasBounds.left + canvasBounds.width / 2,
     y: canvasBounds.top + canvasBounds.height / 2,
   };
@@ -181,6 +178,20 @@ function setManualZoom(nextZoom: number): void {
 }
 
 function updatePreview(): void {
+  if (!sourceControl.value.trim()) {
+    outputRegion.replaceChildren();
+    currentSvg = undefined;
+    currentDiagram = undefined;
+    canvasRegion.classList.add("is-empty");
+    updateZoom();
+    sourceControl.removeAttribute("aria-invalid");
+    errorMessage.textContent = "";
+    statusMessage.textContent = "Paste or type Mermaid ER syntax to begin.";
+    pngButton.disabled = true;
+    svgButton.disabled = true;
+    resetLayout.disabled = true;
+    return;
+  }
   try {
     const diagram = parseErDiagram(sourceControl.value);
     const retainedKeys = new Set([
@@ -209,6 +220,7 @@ function updatePreview(): void {
       if (!retainedKeys.has(key)) positionOffsets.delete(key);
     const svg = renderDiagram(diagram, document, positionOffsets);
     outputRegion.replaceChildren(svg);
+    canvasRegion.classList.remove("is-empty");
     currentSvg = svg;
     currentDiagram = diagram;
     if (fitToView) zoom = fitScale(svg);
@@ -224,6 +236,7 @@ function updatePreview(): void {
   } catch (cause) {
     if (!(cause instanceof ErParseError)) throw cause;
     outputRegion.replaceChildren();
+    canvasRegion.classList.remove("is-empty");
     currentSvg = undefined;
     currentDiagram = undefined;
     updateZoom();
@@ -248,6 +261,65 @@ function diagramPoint(
   );
   return { x: local.x, y: local.y };
 }
+
+function touchDistance(): number | undefined {
+  if (touchPoints.size !== 2) return undefined;
+  const [first, second] = [...touchPoints.values()];
+  return first && second
+    ? Math.hypot(second.x - first.x, second.y - first.y)
+    : undefined;
+}
+
+function touchCenter(): { x: number; y: number } | undefined {
+  if (touchPoints.size !== 2) return undefined;
+  const [first, second] = [...touchPoints.values()];
+  return first && second
+    ? { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+    : undefined;
+}
+
+canvasRegion.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (event.pointerType !== "touch") return;
+  touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const distance = touchDistance();
+  const center = touchCenter();
+  if (distance && center && currentSvg) {
+    drag = undefined;
+    pinch = { distance, zoom, center };
+    canvasRegion.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+});
+
+canvasRegion.addEventListener("pointermove", (event: PointerEvent) => {
+  const previousPoint = touchPoints.get(event.pointerId);
+  if (!previousPoint) return;
+  touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (touchPoints.size === 1 && !drag) {
+    canvasRegion.scrollBy({
+      left: previousPoint.x - event.clientX,
+      top: previousPoint.y - event.clientY,
+    });
+    event.preventDefault();
+    return;
+  }
+  const distance = touchDistance();
+  const center = touchCenter();
+  if (!distance || !center || !pinch) return;
+  fitToView = false;
+  setManualZoom(
+    Math.max(minimumZoom, pinch.zoom * (distance / pinch.distance)),
+    center,
+  );
+  event.preventDefault();
+});
+
+const endTouchGesture = (event: PointerEvent): void => {
+  touchPoints.delete(event.pointerId);
+  if (touchPoints.size < 2) pinch = undefined;
+};
+canvasRegion.addEventListener("pointerup", endTouchGesture);
+canvasRegion.addEventListener("pointercancel", endTouchGesture);
 
 outputRegion.addEventListener("pointerdown", (event: PointerEvent) => {
   if (event.button !== 0 || !event.isPrimary) return;
@@ -605,6 +677,17 @@ function downloadSvg(): void {
 }
 
 sourceControl.addEventListener("input", updatePreview);
+pasteSource.addEventListener("click", async () => {
+  try {
+    sourceControl.value = await navigator.clipboard.readText();
+    sourceControl.focus();
+    updatePreview();
+  } catch {
+    statusMessage.textContent =
+      "Clipboard access is unavailable. Paste into the editor instead.";
+    sourceControl.focus();
+  }
+});
 resetLayout.addEventListener("click", () => {
   positionOffsets.clear();
   const diagram = currentDiagram;

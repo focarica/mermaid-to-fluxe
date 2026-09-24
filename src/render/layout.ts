@@ -90,54 +90,28 @@ export function layoutDiagram(
       )
       .map((entity) => entity.name),
   );
-  const orbitRadii = diagram.entities.map((entity, index) => {
-    const count = entity.attributes.reduce(
-      (total, attribute) => total + 1 + (attribute.components?.length ?? 0),
-      0,
-    );
-    if (count === 0) return 0;
-    const attributeRadius = attributeRadii[index] ?? 0;
-    const entityRadius = entityRadii[index] ?? 0;
+  const orbitRadii = diagram.entities.map((entity, entityIndex) => {
+    const count = entity.attributes.length;
+    if (count === 0) return [];
+    const attributeRadius = attributeRadii[entityIndex] ?? 0;
+    const entityRadius = entityRadii[entityIndex] ?? 0;
     const entityClearance = entityRadius + attributeRadius + clearance;
-    const incident = diagram.relationships.filter(
-      (relationship) =>
-        relationship.from === entity.name || relationship.to === entity.name,
-    );
-    const incidentAngles = incident.map((relationship) =>
-      relationship.from === entity.name ? 0 : Math.PI,
-    );
-    const angularGap = selfRelationshipEntities.has(entity.name)
-      ? Math.PI / (count + 1)
-      : (Math.PI * 2) / count;
-    const attributeClearance =
-      count === 1 && !selfRelationshipEntities.has(entity.name)
-        ? 0
-        : (2 * attributeRadius + clearance) / (2 * Math.sin(angularGap / 2));
-    const angleCandidates = Array.from(
-      { length: Math.max(count, 1) },
-      (_, slot) => -Math.PI / 2 + (slot * Math.PI * 2) / Math.max(count, 1),
-    );
-    const directionClearance =
-      incidentAngles.length === 0
-        ? 0
-        : Math.max(
-              ...angleCandidates.map((angle) =>
-                Math.min(
-                  ...incidentAngles.map((incidentAngle) =>
-                    Math.abs(
-                      Math.atan2(
-                        Math.sin(angle - incidentAngle),
-                        Math.cos(angle - incidentAngle),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ) <
-            Math.PI / 3
-          ? entityClearance + attributeRadius
-          : 0;
-    return Math.max(entityClearance, attributeClearance, directionClearance);
+    return entity.attributes.map((_, index) => {
+      const ring = Math.floor(index / 6);
+      const ringStart = ring * 6;
+      const ringCount = Math.min(6, count - ringStart);
+      const angularGap = selfRelationshipEntities.has(entity.name)
+        ? Math.PI / (ringCount + 1)
+        : (Math.PI * 2) / ringCount;
+      const attributeClearance =
+        ringCount === 1 && !selfRelationshipEntities.has(entity.name)
+          ? 0
+          : (2 * attributeRadius + clearance) / (2 * Math.sin(angularGap / 2));
+      return (
+        Math.max(entityClearance, attributeClearance) +
+        ring * (attributeRadius * 2 + clearance)
+      );
+    });
   });
   const adjacency = new Map(
     diagram.entities.map((entity) => [entity.name, new Set<string>()]),
@@ -164,7 +138,7 @@ export function layoutDiagram(
       entity.name,
       Math.max(
         entityRadii[index] ?? 0,
-        (orbitRadii[index] ?? 0) +
+        Math.max(0, ...(orbitRadii[index] ?? [0])) +
           (attributeRadii[index] ?? 0) +
           Math.max(
             0,
@@ -406,15 +380,82 @@ export function layoutDiagram(
       height: entityHeight,
       weak: false,
     };
+  const attributeRingAngles = diagram.entities.map((entity) => {
+    const center = findEntity(entity.name);
+    const centerOffset = positionOffsets.get(entity.name);
+    const centerPoint = {
+      x: center.x + center.width / 2 - (centerOffset?.x ?? 0),
+      y: center.y + center.height / 2 - (centerOffset?.y ?? 0),
+    };
+    const incidentAngles = diagram.relationships.flatMap((relationship) => {
+      const neighbor =
+        relationship.from === entity.name
+          ? relationship.to
+          : relationship.to === entity.name
+            ? relationship.from
+            : undefined;
+      if (!neighbor || neighbor === entity.name) return [];
+      const neighborShape = findEntity(neighbor);
+      const neighborOffset = positionOffsets.get(neighbor);
+      return [
+        Math.atan2(
+          neighborShape.y +
+            neighborShape.height / 2 -
+            (neighborOffset?.y ?? 0) -
+            centerPoint.y,
+          neighborShape.x +
+            neighborShape.width / 2 -
+            (neighborOffset?.x ?? 0) -
+            centerPoint.x,
+        ),
+      ];
+    });
+    return Array.from(
+      { length: Math.ceil(entity.attributes.length / 6) },
+      (_, ring) => {
+        const ringCount = Math.min(6, entity.attributes.length - ring * 6);
+        if (incidentAngles.length === 0) return -Math.PI / 2;
+        let bestAngle = -Math.PI / 2;
+        let bestClearance = -1;
+        for (let candidate = 0; candidate < 48; candidate += 1) {
+          const startAngle =
+            -Math.PI / 2 + (candidate * Math.PI * 2) / (48 * ringCount);
+          const nearestLine = Math.min(
+            ...Array.from({ length: ringCount }, (_, slot) => {
+              const angle = startAngle + (slot * Math.PI * 2) / ringCount;
+              return Math.min(
+                ...incidentAngles.map((lineAngle) =>
+                  Math.abs(
+                    Math.atan2(
+                      Math.sin(angle - lineAngle),
+                      Math.cos(angle - lineAngle),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          );
+          if (nearestLine > bestClearance) {
+            bestClearance = nearestLine;
+            bestAngle = startAngle;
+          }
+        }
+        return bestAngle;
+      },
+    );
+  });
   const attributes: AttributeShape[] = [];
   for (const [entityIndex, entity] of diagram.entities.entries()) {
     const shape = findEntity(entity.name);
     entity.attributes.forEach((attribute, index) => {
+      const ring = Math.floor(index / 6);
+      const ringStart = ring * 6;
+      const ringCount = Math.min(6, entity.attributes.length - ringStart);
+      const slot = index - ringStart;
       const angle = selfRelationshipEntities.has(entity.name)
-        ? Math.PI / (entity.attributes.length + 1) +
-          (index * Math.PI) / (entity.attributes.length + 1)
-        : -Math.PI / 2 +
-          (index * Math.PI * 2) / Math.max(entity.attributes.length, 1);
+        ? Math.PI / (ringCount + 1) + (slot * Math.PI) / (ringCount + 1)
+        : (attributeRingAngles[entityIndex]?.[ring] ?? -Math.PI / 2) +
+          (slot * Math.PI * 2) / Math.max(ringCount, 1);
       const keyLabel =
         attribute.keys.length > 0 ? `  ${attribute.keys.join("/")}` : "";
       const width = Math.max(
@@ -427,7 +468,7 @@ export function layoutDiagram(
         x: shape.x + shape.width / 2,
         y: shape.y + shape.height / 2,
       };
-      const radius = orbitRadii[entityIndex] ?? 0;
+      const radius = orbitRadii[entityIndex]?.[index] ?? 0;
       const offset = positionOffsets.get(
         `attribute:${entity.name}:${attribute.name}`,
       );

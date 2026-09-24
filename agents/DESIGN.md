@@ -58,22 +58,22 @@ The editor shell is a three-zone composition: a compact source panel, a dominant
 These contracts describe the implemented MVP workbench and Chen renderer. The source panel, diagram surface, and action controls follow the structure below. Real-browser visual QA is manual or Playwright-based; automated unit tests do not replace it.
 
 ### Source Panel
-- **Structure**: labelled section, panel heading and concise helper/status line, labelled multiline editor, inline validation feedback.
+- **Structure**: labelled section, panel heading and concise helper/status line, labelled multiline editor with a syntax placeholder, a Paste action, and inline validation feedback.
 - **Variants**: default, focused, invalid, empty, populated.
 - **Spacing**: panel padding `--space-4`; field group gap `--space-2`; section gap `--space-4`.
 - **States**: default, focus-visible, invalid, empty, and populated; source input remains editable.
 - **Accessibility**: persistent visible label; editor keyboard reachable; errors identified in text and associated with the field; preserve selection and readable line height.
 - **Motion**: no entrance animation required; focus and status transitions use opacity/color only.
-- **Layout**: bounded sidebar with its own vertical scroll owner; stacks above canvas on narrow viewports.
+- **Layout**: bounded sidebar with its own vertical scroll owner; stacks above canvas on narrow viewports. The editor starts empty, with its example syntax shown only as a placeholder.
 
 ### Diagram Canvas
 - **Structure**: labelled, keyboard-focusable figure/work region, drawing surface, and empty and error explanation where appropriate.
 - **Variants**: generated ERD, empty prompt, parse error, dense/large diagram; SVG structure is non-editable, with session-only entity-cluster repositioning.
 - **Spacing**: canvas padding `--space-8`; controls cluster `--space-2`; canvas gutters can grow with viewport.
 - **States**: default, empty, error, fitted, and manually zoomed.
-- **Accessibility**: SVG includes title and description. Entity, relationship, and attribute groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Hover or focus traces connected groups and dims unrelated groups without removing them. Double-click or press Enter on a relationship to center its connected endpoints. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
+- **Accessibility**: SVG includes title and description. Entity, relationship, and attribute groups are focusable, draggable, and keyboard-nudgeable; arrow keys on canvas continue scrolling. Touch supports pinch zoom, one-finger canvas panning, and dragging diagram items. Hover or focus traces connected groups and dims unrelated groups without removing them. Double-click or press Enter on a relationship to center its connected endpoints. Reset layout clears session offsets. Names retained through source edits retain positions; reload resets. Zoom, fit, and export remain available.
 - **Motion**: diagram output remains still; zoom changes scale without animation.
-- **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document.
+- **Layout**: dominant flexible region; canvas owns scrolling and overflow, not the document. On narrow screens the canvas has a viewport-bounded height and begins at its top edge, with compact controls wrapping into rows.
 
 ### Action Controls
 - **Structure**: source input updates the diagram preview live; semantic zoom in/out/fit controls, SVG export, and PNG download buttons.

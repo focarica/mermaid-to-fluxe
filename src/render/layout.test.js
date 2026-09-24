@@ -468,10 +468,32 @@ describe("layoutDiagram", () => {
     const detailed = layout.entities.find(({ name }) => name === "Detailed");
     const middle = layout.entities.find(({ name }) => name === "Middle");
     const tail = layout.entities.find(({ name }) => name === "Tail");
+    const innerField = layout.attributes.find(
+      ({ entity, name }) => entity === "Detailed" && name === "field_0",
+    );
+    const outerField = layout.attributes.find(
+      ({ entity, name }) => entity === "Detailed" && name === "field_6",
+    );
     expect(detailed).toBeDefined();
     expect(middle).toBeDefined();
     expect(tail).toBeDefined();
+    expect(innerField).toBeDefined();
+    expect(outerField).toBeDefined();
     if (!detailed || !middle || !tail) throw new Error("Expected chain nodes");
+    if (!innerField || !outerField)
+      throw new Error("Expected multiple attribute rings");
+    const entityCenter = {
+      x: detailed.x + detailed.width / 2,
+      y: detailed.y + detailed.height / 2,
+    };
+    const distanceToEntity = (attribute) =>
+      Math.hypot(
+        attribute.x + attribute.width / 2 - entityCenter.x,
+        attribute.y + attribute.height / 2 - entityCenter.y,
+      );
+    expect(distanceToEntity(innerField)).toBeLessThan(
+      distanceToEntity(outerField),
+    );
     expect(layout).toEqual(layoutDiagram(crowded));
   });
 
@@ -501,8 +523,8 @@ describe("layoutDiagram", () => {
     expect(movedCustomer.y - customer.y).toBe(75);
     expect(movedAttribute.x - attribute.x).toBeCloseTo(120);
     expect(movedAttribute.y - attribute.y).toBeCloseTo(75);
-    expect(movedAttribute.anchor.x - attribute.anchor.x).toBe(120);
-    expect(movedAttribute.anchor.y - attribute.anchor.y).toBe(75);
+    expect(movedAttribute.anchor.x - attribute.anchor.x).toBeCloseTo(120);
+    expect(movedAttribute.anchor.y - attribute.anchor.y).toBeCloseTo(75);
     expect(moved.relationships[0]?.links).not.toEqual(
       base.relationships[0]?.links,
     );
